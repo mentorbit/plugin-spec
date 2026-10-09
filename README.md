@@ -24,6 +24,7 @@ Mentorbit 由固定的内核与有限的扩展点组成。0.1 开放三类扩展
 | [07 版本与演进](spec/07-版本与演进.md) | 版本策略、状态标签、变更流程 | 草案 |
 | [08 安全与审核](spec/08-安全与审核.md) | 不可信输出、供应链、审核、吊销 | 草案 |
 | [附录 A](spec/附录A-开放问题.md) | 待决事项 | — |
+| [附录 B](spec/附录B-数值上限.md) | 各字段的长度、数量与取值上限，由 Schema 生成 | 草案 |
 
 状态标签的定义见 [7.4](spec/07-版本与演进.md#74-状态标签)。正文与 [`schemas/`](schemas/)（JSON Schema 2020-12）不一致时，以正文为准。
 
@@ -33,7 +34,8 @@ Mentorbit 由固定的内核与有限的扩展点组成。0.1 开放三类扩展
 spec/       规范正文
 schemas/    JSON Schema
 examples/   示例插件：内容包、渲染器、工具
-tools/      校验器、冒烟测试宿主、渲染器开发宿主
+tools/      校验器、冒烟测试宿主、渲染器开发宿主、附录 B 生成器
+.github/    持续集成（Windows、Linux、macOS）
 ```
 
 ## 校验
@@ -62,14 +64,15 @@ python3 -m venv .venv
 
 | 工具 | 用途 |
 |---|---|
-| `tools/validate.py` | 校验插件包：清单、权限、引用完整性、对象 Schema、渲染器入口、内容数据、完整性文件 |
-| `tools/smoke_tool.py` | 按第 05 章协议运行工具插件，检查握手、回调、取消与关闭 |
-| `tools/test_*.py` | 单元测试：校验器反例、冒烟宿主的宿主方法，以及文档示例、协议 Schema 与正文的一致性 |
+| `tools/validate.py` | 校验插件包：清单、权限、路径、引用完整性、对象 Schema、渲染器入口、受限 Markdown、完整性文件 |
+| `tools/smoke_tool.py` | 按第 05 章协议运行工具插件，检查握手、回调、取消、超时、畸形消息与关闭 |
 | `tools/renderer_host/serve.py` | 渲染器开发宿主，按第 04 章要求加载渲染器，默认监听 `http://127.0.0.1:8765/` |
+| `tools/gen_limits.py` | 根据 Schema 生成附录 B；`--check` 只检查是否一致 |
+| `tools/test_*.py` | 单元测试：校验器反例与模糊测试、冒烟宿主、渲染器开发宿主，以及正文、示例与 Schema 的一致性 |
 
 ## 参与贡献
 
-规范变更遵循 [7.5 变更流程](spec/07-版本与演进.md#75-变更流程)：规范性修改须同步更新正文、Schema、校验器与示例。安全问题请按 [SECURITY.md](SECURITY.md) 私下报告。
+见 [CONTRIBUTING.md](CONTRIBUTING.md)。规范变更遵循 [7.5 变更流程](spec/07-版本与演进.md#75-变更流程)；推送与合并请求会在 GitHub Actions 上于 Windows、Linux、macOS 运行全部检查。安全问题请按 [SECURITY.md](SECURITY.md) 私下报告。
 
 ## 许可
 
@@ -78,6 +81,6 @@ Copyright © 2026 The Mentorbit Authors（Mentorbit 项目作者，以 Git 提�
 | 范围 | 许可 |
 |---|---|
 | `spec/` 下的规范正文、`README.md` 及其他说明文档 | CC BY 4.0，全文见 [LICENSE-CC-BY](LICENSE-CC-BY) |
-| `schemas/`、`tools/`、`examples/` 下的全部文件 | Apache-2.0，全文见 [LICENSE-APACHE](LICENSE-APACHE) |
+| `schemas/`、`tools/`、`examples/`、`.github/` 下的全部文件 | Apache-2.0，全文见 [LICENSE-APACHE](LICENSE-APACHE) |
 
 依据本规范实现宿主或插件，不需要采用上述任一许可；插件可以闭源发布。

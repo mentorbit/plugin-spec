@@ -13,10 +13,13 @@ import hashlib
 import json
 import re
 import sys
+import unicodedata
 from collections import defaultdict
 from pathlib import Path
+from urllib.parse import unquote
 
 from jsonschema import Draft202012Validator
+from markdown_it import MarkdownIt
 from referencing import Registry, Resource
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -34,11 +37,12 @@ INPUT_SCHEMA_KEYWORDS = {
 INPUT_SCHEMA_TYPES = {"string", "number", "integer", "boolean", "array", "object"}
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 REF_RE = re.compile(r"^(?:(?P<plugin>[a-z][a-z0-9-]{1,38}\.[a-z][a-z0-9-]{1,38})/)?(?P<pack>[a-z][a-z0-9_]{1,31})#(?P<entry>[a-z0-9][a-z0-9_-]{0,63})$")
-HTML_TAG_RE = re.compile(r"<\s*/?\s*[A-Za-z!][^>]*>")
-MD_IMAGE_RE = re.compile(r"!\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\)")
-MD_LINK_RE = re.compile(r"(?<!!)\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\)")
-FENCE_RE = re.compile(r"(^|\n)(```|~~~).*?(\n\2[^\n]*)(?=\n|$)", re.S)
-INLINE_CODE_RE = re.compile(r"`[^`\n]*`")
+SCHEME_RE = re.compile(r"^[a-z][a-z0-9+.-]*:|^//", re.I)
+
+# 规范 3.6：CommonMark 加 GFM 表格与删除线；不启用自动链接字面量。
+# 打开 html 选项只是为了让解析器识别出原始 HTML，从而报告它；链接校验关闭，以便所有链接都交给本工具检查。
+MARKDOWN = MarkdownIt("commonmark", {"html": True, "linkify": False}).enable(["table", "strikethrough"])
+MARKDOWN.validateLink = lambda url: True
 
 
 def permission_min_tier(permission_id: str) -> str:
@@ -172,25 +176,38 @@ def check_localized(value, default_locale: str, max_chars: int | None, report: R
                 report.error(where, f"超过 {max_chars} 个字符")
 
 
-def check_input_schema(node, report: Report, where: str) -> None:
-    """规范 5.3：inputSchema 只能使用规定的关键字子集。"""
+def check_input_schema(node, report: Report, where: str, root: bool = True) -> None:
+    """规范 5.3：inputSchema 只能使用规定的关键字子集，且本身必须是合法的 JSON Schema。"""
     if not isinstance(node, dict):
         report.error(where, "必须是对象")
         return
+    if root:
+        try:
+            Draft202012Validator.check_schema(node)
+        except Exception as exc:  # noqa: BLE001 - 汇总为校验错误
+            report.error(where, f"不是合法的 JSON Schema：{getattr(exc, 'message', exc)}")
     extra = set(node) - INPUT_SCHEMA_KEYWORDS
     if extra:
         report.error(where, f"使用了子集之外的关键字 {sorted(extra)}")
     node_type = node.get("type")
-    if node_type is not None and node_type not in INPUT_SCHEMA_TYPES:
+    if node_type is not None and (not isinstance(node_type, str) or node_type not in INPUT_SCHEMA_TYPES):
         report.error(where, f"type 取值 {node_type!r} 不在允许范围内")
     if node_type == "object" and node.get("additionalProperties") is not False:
         report.error(where, "对象类型必须声明 additionalProperties: false")
-    for key, sub in (node.get("properties") or {}).items():
-        check_input_schema(sub, report, f"{where}/properties/{key}")
+    properties = node.get("properties", {})
+    if not isinstance(properties, dict):
+        report.error(where, "properties 必须是对象")
+        properties = {}
+    for key, sub in properties.items():
+        check_input_schema(sub, report, f"{where}/properties/{key}", root=False)
     if "items" in node:
-        check_input_schema(node["items"], report, f"{where}/items")
-    for key in node.get("required", []):
-        if key not in (node.get("properties") or {}):
+        check_input_schema(node["items"], report, f"{where}/items", root=False)
+    required = node.get("required", [])
+    if not isinstance(required, list) or not all(isinstance(k, str) for k in required):
+        report.error(where, "required 必须是字符串数组")
+        return
+    for key in required:
+        if key not in properties:
             report.error(where, f"required 中的 {key!r} 未在 properties 中定义")
 
 
@@ -219,25 +236,58 @@ def check_object_schema(path: Path, report: Report, where: str) -> None:
     walk(schema)
 
 
-def strip_code(text: str) -> str:
-    return INLINE_CODE_RE.sub("", FENCE_RE.sub("\n", text))
+def iter_tokens(tokens):
+    for token in tokens:
+        yield token
+        if token.children:
+            yield from iter_tokens(token.children)
 
 
 def check_markdown(text: str, package: Path, report: Report, where: str) -> None:
-    """规范 3.6：受限 Markdown（不含原始 HTML、图片仅限包内位图、链接仅限 https）。"""
-    prose = strip_code(text)
-    if HTML_TAG_RE.search(prose):
-        report.error(where, "受限 Markdown 不得包含原始 HTML")
-    for target in MD_IMAGE_RE.findall(prose):
-        if re.match(r"^[a-z][a-z0-9+.-]*:", target, re.I):
-            report.error(where, f"图片必须引用包内文件，不得引用 {target}")
-        elif Path(target).suffix.lower() not in IMAGE_EXT:
-            report.error(where, f"图片格式不允许：{target}")
+    """规范 3.6：受限 Markdown。用 CommonMark 解析器解析后检查，引用式链接、自动链接与代码块都按语法处理。"""
+    reported_html = False
+    for token in iter_tokens(MARKDOWN.parse(text)):
+        if token.type in ("html_block", "html_inline"):
+            if not reported_html:
+                report.error(where, "受限 Markdown 不得包含原始 HTML（代码中的 HTML 不受影响）")
+                reported_html = True
+        elif token.type == "image":
+            target = unquote(token.attrGet("src") or "")
+            if SCHEME_RE.match(target):
+                report.error(where, f"图片必须引用包内文件，不得引用 {target}")
+            elif Path(target.split("#")[0].split("?")[0]).suffix.lower() not in IMAGE_EXT:
+                report.error(where, f"图片格式不允许：{target}")
+            else:
+                safe_path(package, target, report, where)
+        elif token.type == "link_open":
+            href = token.attrGet("href") or ""
+            if not href.lower().startswith("https://"):
+                report.error(where, f"链接只允许 https：{href}")
+
+
+def check_renderer_html(html: str, base: Path, package: Path, report: Report, where: str) -> None:
+    """规范 4.2：沙箱 CSP 下不允许内联脚本与事件属性，资源只能来自包内，渲染器不得跳转自身。"""
+    if re.search(r"<script(?![^>]*\bsrc=)[^>]*>", html, re.I):
+        report.error(where, "沙箱 CSP 下内联脚本不会执行，脚本必须放在包内文件中")
+    if re.search(r"\bon[a-z]+\s*=", html, re.I):
+        report.error(where, "沙箱 CSP 下内联事件处理属性不会执行")
+    if re.search(r"<meta[^>]+http-equiv\s*=\s*[\"']?\s*refresh", html, re.I):
+        report.error(where, "渲染器不得使用 meta refresh 跳转（规范 4.2）")
+
+    targets = re.findall(r"\b(?:src|href)\s*=\s*[\"']([^\"']+)[\"']", html, re.I)
+    for srcset in re.findall(r"\bsrcset\s*=\s*[\"']([^\"']+)[\"']", html, re.I):
+        targets += [part.strip().split()[0] for part in srcset.split(",") if part.strip()]
+    targets += re.findall(r"url\(\s*[\"']?([^\"')\s]+)", html, re.I)
+    targets += re.findall(r"@import\s+[\"']([^\"']+)[\"']", html, re.I)
+    for target in targets:
+        if target.lower().startswith(("data:", "blob:")):
+            continue  # CSP 允许 data: 与 blob: 图片
+        if SCHEME_RE.match(target):
+            report.error(where, f"不得引用包外资源：{target}")
         else:
-            safe_path(package, target, report, where)
-    for target in MD_LINK_RE.findall(prose):
-        if not target.startswith("https://"):
-            report.error(where, f"链接只允许 https：{target}")
+            clean = unquote(target.split("#")[0].split("?")[0])
+            if clean:
+                safe_path(package, (base / clean).as_posix(), report, where)
 
 
 def acyclic(nodes, edges) -> list[str] | None:
@@ -445,8 +495,9 @@ def check_package(package: Path, validators: dict[str, Draft202012Validator]) ->
         w = f"renderers.{r['id']}"
         for ot in r["objectTypes"]:
             if "/" in ot:
-                if f"objects.read:{ot}" not in perm_ids:
-                    report.error(w, f"渲染其他插件的类型 {ot} 需要申请 objects.read:{ot}")
+                qualified = ot.split("@")[0]  # 规范 4.1：权限 ID 不含 @<主版本>
+                if f"objects.read:{qualified}" not in perm_ids:
+                    report.error(w, f"渲染其他插件的类型 {qualified} 需要申请 objects.read:{qualified}")
             elif ot not in object_types:
                 report.error(w, f"引用了未声明的对象类型 {ot}")
         if r.get("minHeight") and r.get("maxHeight") and r["minHeight"] > r["maxHeight"]:
@@ -454,16 +505,7 @@ def check_package(package: Path, validators: dict[str, Draft202012Validator]) ->
         entry = safe_path(package, r["entry"], report, f"{w}.entry")
         html = read_text(entry, report, f"{w}.entry") if entry else None
         if html is not None:
-            # 规范 4.2：CSP 禁止内联脚本与包外资源
-            if re.search(r"<script(?![^>]*\bsrc=)[^>]*>", html, re.I):
-                report.error(f"{w}.entry", "沙箱 CSP 下内联脚本不会执行，脚本必须放在包内文件中")
-            for src in re.findall(r"(?:src|href)\s*=\s*[\"']([^\"']+)[\"']", html, re.I):
-                if re.match(r"^[a-z][a-z0-9+.-]*:", src, re.I) or src.startswith("//"):
-                    report.error(f"{w}.entry", f"不得引用包外资源：{src}")
-                else:
-                    safe_path(package, (Path(r["entry"]).parent / src).as_posix(), report, f"{w}.entry")
-            if re.search(r"\bon[a-z]+\s*=", html, re.I):
-                report.error(f"{w}.entry", "沙箱 CSP 下内联事件处理属性不会执行")
+            check_renderer_html(html, Path(r["entry"]).parent, package, report, f"{w}.entry")
 
     # 内容包：先建索引，再检查引用
     index = ContentIndex()
@@ -511,6 +553,17 @@ def check_package(package: Path, validators: dict[str, Draft202012Validator]) ->
     size = sum(p.stat().st_size for p in files)
     if size > 20 * 1024 * 1024 or len(files) > 5000:
         report.warn("包", f"{len(files)} 个文件、{size} 字节，超过宿主必须接受的下限，可能被拒绝")
+
+    # 路径形式（规范 1.1）：Unicode NFC，且不得仅大小写不同
+    by_fold: dict[str, list[str]] = defaultdict(list)
+    for p in files:
+        rel = p.relative_to(package).as_posix()
+        if unicodedata.normalize("NFC", rel) != rel:
+            report.error("包", f"路径不是 Unicode NFC 形式：{rel}")
+        by_fold[unicodedata.normalize("NFC", rel).casefold()].append(rel)
+    for group in by_fold.values():
+        if len(group) > 1:
+            report.error("包", f"存在仅大小写不同的路径：{', '.join(sorted(group))}")
 
     # 完整性（规范 1.6）：存在时先按 Schema 校验格式，再逐一核对
     integrity_path = package / INTEGRITY_NAME

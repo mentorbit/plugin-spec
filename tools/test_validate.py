@@ -7,13 +7,16 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import hashlib
 import io
 import json
+import random
 import re
 import shutil
 import sys
 import tempfile
+import unicodedata
 import unittest
 from pathlib import Path
 
@@ -133,8 +136,44 @@ class RendererRules(PackageCase):
     def test_foreign_object_type_needs_permission(self):
         pkg = self.copy("flashcard-renderer")
         self.edit_json(pkg / validate.MANIFEST_NAME, lambda m: m["contributes"]["renderers"][0]["objectTypes"].append(
-            "example.glossary/glossary_entry"))
+            "example.glossary/glossary_entry@1"))
         self.assertRejects(pkg, "objects.read:example.glossary/glossary_entry")
+
+    def test_foreign_object_type_with_permission_passes(self):
+        pkg = self.copy("flashcard-renderer")
+
+        def add(m):
+            m["contributes"]["renderers"][0]["objectTypes"].append("example.glossary/glossary_entry@1")
+            m["permissions"].append({"id": "objects.read:example.glossary/glossary_entry", "reason": "展示术语卡片"})
+        self.edit_json(pkg / validate.MANIFEST_NAME, add)
+        self.assertEqual(self.errors(pkg), "")
+
+    def test_foreign_object_type_requires_major_version(self):
+        """规范 4.1 / 7.3：其他插件的类型必须带 @<主版本>。"""
+        pkg = self.copy("flashcard-renderer")
+        self.edit_json(pkg / validate.MANIFEST_NAME, lambda m: m["contributes"]["renderers"][0]["objectTypes"].append(
+            "example.glossary/glossary_entry"))
+        self.assertRejects(pkg, "objectTypes")
+
+    def test_outside_resources_in_html(self):
+        """规范 4.2：srcset、样式中的 url() 与 @import、meta refresh 都要拦截；data: 图片允许。"""
+        cases = {
+            "srcset": ('<img srcset="https://example.com/a.png 2x">', "不得引用包外资源"),
+            "url()": ("<style>body{background:url(https://example.com/a.png)}</style>", "不得引用包外资源"),
+            "@import": ('<style>@import "https://example.com/a.css";</style>', "不得引用包外资源"),
+            "meta refresh": ('<meta http-equiv="refresh" content="0;url=https://example.com">', "meta refresh"),
+        }
+        for name, (snippet, fragment) in cases.items():
+            with self.subTest(name):
+                pkg = self.copy("flashcard-renderer")
+                html = pkg / "renderer" / "index.html"
+                html.write_text(html.read_text(encoding="utf-8").replace("</body>", snippet + "</body>"), encoding="utf-8")
+                self.assertRejects(pkg, fragment)
+        pkg = self.copy("flashcard-renderer")
+        html = pkg / "renderer" / "index.html"
+        html.write_text(html.read_text(encoding="utf-8").replace("</body>", '<img src="data:image/png;base64,AA==">'
+                                                                          "</body>"), encoding="utf-8")
+        self.assertEqual(self.errors(pkg), "")
 
 
 class ContentRules(PackageCase):
@@ -193,6 +232,38 @@ class ContentRules(PackageCase):
         md = pkg / "content" / "lectures" / "variables.md"
         md.write_text(md.read_text(encoding="utf-8") + "\n![图](https://example.com/a.png)\n", encoding="utf-8")
         self.assertRejects(pkg, "图片必须引用包内文件")
+
+    def lecture_with(self, body: str) -> Path:
+        pkg = self.copy("intro-cs-content")
+        (pkg / "content" / "lectures" / "variables.md").write_text("# 标题\n\n" + body + "\n", encoding="utf-8")
+        return pkg
+
+    def test_markdown_syntax_cannot_bypass_rules(self):
+        """规范 3.6：引用式写法与行内写法同样受限。"""
+        cases = {
+            "引用式 http 链接": ("[x][r]\n\n[r]: http://example.com", "链接只允许 https"),
+            "引用式远程图片": ("![图][img]\n\n[img]: https://example.com/a.png", "图片必须引用包内文件"),
+            "尖括号 http 自动链接": ("<http://example.com>", "链接只允许 https"),
+            "javascript 链接": ("[x](javascript:alert(1))", "链接只允许 https"),
+            "原始 HTML 块": ("<div>块</div>", "原始 HTML"),
+        }
+        for name, (body, fragment) in cases.items():
+            with self.subTest(name):
+                self.assertRejects(self.lecture_with(body), fragment)
+
+    def test_markdown_allowed_forms(self):
+        """规范 3.6：https 自动链接、代码中的 HTML、未启用自动链接时的裸网址都允许。"""
+        cases = {
+            "https 自动链接": "<https://example.com>",
+            "缩进代码块中的 HTML": "示例：\n\n    <div>代码</div>",
+            "围栏代码块中的 HTML": "```html\n<div>代码</div>\n```",
+            "行内代码中的 HTML": "`<div>` 是块级标签",
+            "裸网址（不渲染为链接）": "访问 http://example.com 了解更多",
+            "表格与删除线": "| a | b |\n|---|---|\n| 1 | ~~2~~ |",
+        }
+        for name, body in cases.items():
+            with self.subTest(name):
+                self.assertEqual(self.errors(self.lecture_with(body)), "")
 
     def test_non_https_link_rejected(self):
         pkg = self.copy("intro-cs-content")
@@ -393,8 +464,18 @@ class ProtocolSchemaConsistency(unittest.TestCase):
     @staticmethod
     def def_name(method: str, kind: str) -> str:
         """规范 4.5 / 5.4：去掉 host/ 前缀，按 / 与 . 分段驼峰拼接，再加 Params 或 Result。"""
-        parts = re.split(r"[/.]", method.removeprefix("host/"))
+        parts = re.split(r"[/.]", method.removeprefix("host/").removeprefix("$/"))
         return parts[0] + "".join(p[:1].upper() + p[1:] for p in parts[1:]) + kind
+
+    def test_tool_lifecycle_methods_have_schema_definitions(self):
+        """规范 5.4：生命周期方法同样按统一规则定义；请求有 Params 与 Result，通知只有 Params。"""
+        defs = SCHEMAS["tool-messages.schema.json"]["$defs"]
+        for method, is_request in [("initialize", True), ("tools/call", True), ("$/cancel", False),
+                                   ("shutdown", True), ("exit", False)]:
+            with self.subTest(method=method):
+                self.assertIn(self.def_name(method, "Params"), defs)
+                if is_request:
+                    self.assertIn(self.def_name(method, "Result"), defs)
 
     def test_every_renderer_method_has_schema_definitions(self):
         """第 04 章方法表中的请求必须有 Params 与 Result，通知只有 Params。"""
@@ -495,6 +576,125 @@ class ExampleSamples(unittest.TestCase):
                 self.assertEqual(errors, [])
                 self.assertTrue(1 <= len(sample["fallbackText"]) <= 2000)
                 self.assertLessEqual(len(json.dumps(sample["value"], ensure_ascii=False).encode("utf-8")), 128 * 1024)
+
+
+class InputSchemaRobustness(PackageCase):
+    """inputSchema 中各种畸形写法必须被报告，而不是让校验器崩溃（第四轮检查的模糊测试发现）。"""
+
+    def test_malformed_nested_input_schema(self):
+        cases = {
+            "type 为数组": lambda t: t.update(type=[]),
+            "required 含数组": lambda t: t.update(required=[[1]]),
+            "properties 为数组": lambda t: t.update(properties=[1]),
+            "items 为字符串": lambda t: t.update(items="x"),
+        }
+        for name, mutate in cases.items():
+            with self.subTest(name):
+                pkg = self.copy("glossary-tool")
+                self.edit_json(pkg / validate.MANIFEST_NAME,
+                               lambda m: mutate(m["contributes"]["tools"][0]["inputSchema"]["properties"]["term"]))
+                try:
+                    errors = self.errors(pkg)
+                except Exception as exc:  # noqa: BLE001
+                    self.fail(f"校验器崩溃：{type(exc).__name__}: {exc}")
+                self.assertIn("inputSchema", errors)
+
+
+class PathForms(PackageCase):
+    """规范 1.1：路径使用 Unicode NFC，且不得仅大小写不同。"""
+
+    def test_non_nfc_path_rejected(self):
+        pkg = self.copy("intro-cs-content")
+        (pkg / unicodedata.normalize("NFD", "café.txt")).write_text("x", encoding="utf-8")
+        self.assertRejects(pkg, "Unicode NFC")
+
+    def test_case_only_difference_rejected(self):
+        pkg = self.copy("intro-cs-content")
+        (pkg / "Note.txt").write_text("a", encoding="utf-8")
+        if (pkg / "note.txt").exists():
+            self.skipTest("当前文件系统不区分大小写，无法构造仅大小写不同的两个文件")
+        (pkg / "note.txt").write_text("b", encoding="utf-8")
+        self.assertRejects(pkg, "仅大小写不同")
+
+
+class RuntimeSchema(PackageCase):
+    def test_native_interpreter_not_open_in_0_1(self):
+        """规范 1.5：native 保留到后续版本。"""
+        pkg = self.copy("glossary-tool")
+        self.edit_json(pkg / validate.MANIFEST_NAME, lambda m: m["runtime"].update(interpreter="native"))
+        self.assertRejects(pkg, "interpreter")
+
+
+class SpecWording(unittest.TestCase):
+    """规范 0.4：只有加粗的规范性用语才有效力，因此正文中不得出现未加粗的规范性用语。"""
+
+    TERMS = re.compile(r"必须|不得|应当|不应|可以")
+
+    def test_no_unbolded_normative_terms(self):
+        problems = []
+        for md in sorted((validate.ROOT / "spec").glob("[0-9]*.md")):
+            text = re.sub(r"```.*?```", lambda m: "\n" * m.group().count("\n"), md.read_text(encoding="utf-8"), flags=re.S)
+            for no, line in enumerate(text.splitlines(), 1):
+                # 0.4 节的用语定义表、“说明”段落与状态行不计
+                if ("本规范用语" in line or re.search(r"\| (MUST|SHOULD|MAY)", line)
+                        or line.lstrip().startswith("说明") or line.startswith("> 状态")):
+                    continue
+                unbolded = re.sub(r"\*\*[^*]+\*\*", "", line)
+                for m in self.TERMS.finditer(unbolded):
+                    problems.append(f"{md.name}:{no} 「{m.group()}」")
+        self.assertEqual(problems, [])
+
+
+class AppendixLimits(unittest.TestCase):
+    def test_appendix_b_matches_schemas(self):
+        """附录 B 必须与 schemas/ 一致（由 tools/gen_limits.py 生成）。"""
+        import gen_limits
+        self.assertEqual(gen_limits.TARGET.read_text(encoding="utf-8"), gen_limits.render())
+
+
+class FuzzRegression(PackageCase):
+    """随机破坏示例中的 JSON，校验器只能报告错误，不能抛出异常。种子固定，结果可复现。"""
+
+    JUNK = [None, True, 0, -1, 1.5, "", "x" * 300, [], {}, [None], {"a": None}, "../x", "a#b", "\u0000"]
+
+    def mutate(self, rng: random.Random, node):
+        paths = []
+
+        def collect(n, path):
+            paths.append(path)
+            if isinstance(n, dict):
+                for k, v in n.items():
+                    collect(v, path + [k])
+            elif isinstance(n, list):
+                for i, v in enumerate(n):
+                    collect(v, path + [i])
+        collect(node, [])
+        if len(paths) == 1:
+            return copy.deepcopy(rng.choice(self.JUNK))
+        path = rng.choice(paths[1:])
+        parent = node
+        for p in path[:-1]:
+            parent = parent[p]
+        if isinstance(parent, dict) and rng.random() < 0.2:
+            parent.pop(path[-1], None)
+        else:
+            parent[path[-1]] = copy.deepcopy(rng.choice(self.JUNK))
+        return node
+
+    def test_random_mutations_never_crash(self):
+        rng = random.Random(20261009)
+        for example in ("intro-cs-content", "flashcard-renderer", "glossary-tool"):
+            files = sorted((EXAMPLES / example).rglob("*.json"))
+            for i in range(60):
+                pkg = self.copy(example)
+                victim = pkg / rng.choice(files).relative_to(EXAMPLES / example)
+                data = json.loads(victim.read_text(encoding="utf-8"))
+                victim.write_text(json.dumps(self.mutate(rng, data), ensure_ascii=False), encoding="utf-8")
+                with self.subTest(example=example, run=i, file=victim.name):
+                    try:
+                        validate.check_package(pkg, VALIDATORS)
+                    except Exception as exc:  # noqa: BLE001
+                        self.fail(f"校验器崩溃：{type(exc).__name__}: {exc}")
 
 
 if __name__ == "__main__":

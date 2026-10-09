@@ -1,0 +1,38 @@
+name: 测试
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.os }} · Python ${{ matrix.python }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.10", "3.13"]
+    runs-on: ${{ matrix.os }}
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: 安装依赖
+        run: python -m pip install -r tools/requirements.txt
+      - name: 校验示例插件
+        run: python tools/validate.py examples/intro-cs-content examples/flashcard-renderer examples/glossary-tool
+      - name: 工具协议冒烟检查
+        run: python tools/smoke_tool.py examples/glossary-tool
+      - name: 单元测试
+        run: python -m unittest discover -s tools -p "test_*.py"
+      - name: 附录 B 与 Schema 一致
+        run: python tools/gen_limits.py --check

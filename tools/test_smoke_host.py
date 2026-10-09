@@ -58,6 +58,8 @@ class HostMethodTests(unittest.TestCase):
     def test_definition_naming(self):
         self.assertEqual(smoke_tool.host_method_def("host/storage.get", "Params"), "storageGetParams")
         self.assertEqual(smoke_tool.host_method_def("host/evidence.propose", "Result"), "evidenceProposeResult")
+        self.assertEqual(smoke_tool.host_method_def("$/cancel", "Params"), "cancelParams")
+        self.assertEqual(smoke_tool.host_method_def("tools/call", "Result"), "toolsCallResult")
 
     def test_storage_roundtrip_and_delete(self):
         self.assertEqual(self.answer("host/storage.set", {"callId": "call-rw", "key": "k", "value": [1]})["result"], {})

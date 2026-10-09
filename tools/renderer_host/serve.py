@@ -23,10 +23,16 @@ HERE = Path(__file__).resolve().parent
 def make_handler(package: Path, origin: str):
     package = package.resolve()
     manifest = json.loads((package / "mentorbit.plugin.json").read_text(encoding="utf-8"))
+    # 规范 4.2：渲染器文档的 CSP
     csp = (
         f"default-src 'none'; script-src {origin}; style-src {origin} 'unsafe-inline'; "
-        f"img-src {origin} data: blob:; font-src {origin}; connect-src 'none'; "
+        f"img-src {origin} data: blob:; media-src {origin}; font-src {origin}; connect-src 'none'; "
         "form-action 'none'; base-uri 'none'"
+    )
+    # 规范 4.2：宿主页面用 frame-src 把渲染器 iframe 限制在包资源源以内，阻止其跳转到外部页面
+    host_csp = (
+        f"default-src 'self'; style-src 'self' 'unsafe-inline'; frame-src {origin}; "
+        "object-src 'none'; form-action 'none'; base-uri 'none'"
     )
 
     class Handler(BaseHTTPRequestHandler):
@@ -46,7 +52,8 @@ def make_handler(package: Path, origin: str):
         def do_GET(self):
             path = unquote(urlsplit(self.path).path)
             if path == "/":
-                return self.send_bytes((HERE / "host.html").read_bytes(), "text/html; charset=utf-8")
+                return self.send_bytes((HERE / "host.html").read_bytes(), "text/html; charset=utf-8",
+                                       {"Content-Security-Policy": host_csp})
             if path == "/host.js":
                 return self.send_bytes((HERE / "host.js").read_bytes(), "text/javascript; charset=utf-8")
             if path == "/manifest.json":

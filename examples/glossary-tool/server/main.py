@@ -16,6 +16,8 @@ TOOLS = ["lookup_term"]
 DATA = json.loads((Path(__file__).resolve().parent.parent / "data" / "terms.json").read_text(encoding="utf-8"))
 
 ERRORS = {
+    "parse_error": -32700,
+    "invalid_request": -32600,
     "invalid_params": -32602,
     "method_not_found": -32601,
     "internal_error": -32603,
@@ -134,33 +136,64 @@ def handle_call(request_id, params: dict) -> None:
             _calls.pop(call_id, None)
 
 
+def valid_id(value) -> bool:
+    return isinstance(value, str) or (isinstance(value, int) and not isinstance(value, bool))
+
+
 def main() -> None:
+    # 规范 5.4：畸形消息按 5.5 回复错误，不退出、不影响其他调用
     for raw in sys.stdin.buffer:
         try:
             message = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
-            send({"id": None, "error": {"code": -32700, "message": "parse error", "data": {"reason": "parse_error"}}})
+            send_error(None, "parse_error", "不是合法的 JSON")
+            continue
+        if not isinstance(message, dict) or message.get("jsonrpc") != "2.0":
+            rid = message.get("id") if isinstance(message, dict) else None
+            send_error(rid if valid_id(rid) else None, "invalid_request", "不是合法的 JSON-RPC 2.0 消息")
             continue
 
         method = message.get("method")
         request_id = message.get("id")
 
-        if method is None:  # 宿主对 host/* 请求的响应
-            with _state_lock:
-                waiter = _host_pending.pop(request_id, None)
-            if waiter:
-                waiter["message"] = message
-                waiter["event"].set()
+        if method is None:
+            if "result" in message or "error" in message:  # 宿主对 host/* 请求的响应
+                with _state_lock:
+                    waiter = _host_pending.pop(request_id, None) if valid_id(request_id) else None
+                if waiter:
+                    waiter["message"] = message
+                    waiter["event"].set()
+            else:
+                send_error(request_id if valid_id(request_id) else None, "invalid_request", "缺少 method")
+            continue
+        if not isinstance(method, str):
+            send_error(request_id if valid_id(request_id) else None, "invalid_request", "method 必须是字符串")
             continue
 
-        params = message.get("params") or {}
+        params = message.get("params", {})
+        if not isinstance(params, dict):
+            if request_id is not None:
+                send_error(request_id, "invalid_params", "params 必须是对象")
+            continue
+
         if method == "initialize":
+            grants = params.get("grants", [])
+            if not isinstance(grants, list) or not all(isinstance(g, str) for g in grants):
+                send_error(request_id, "invalid_params", "grants 必须是字符串数组")
+                continue
             _grants.clear()
-            _grants.update(params.get("grants", []))
+            _grants.update(grants)
             send({"id": request_id, "result": {"protocol": PROTOCOL, "tools": TOOLS}})
         elif method == "tools/call":
+            call_id = params.get("callId")
+            if not isinstance(call_id, str) or not call_id:
+                send_error(request_id, "invalid_params", "tools/call 缺少 callId")
+                continue
             with _state_lock:
-                _calls[params["callId"]] = threading.Event()
+                if call_id in _calls:
+                    send_error(request_id, "invalid_params", f"callId 重复：{call_id}")
+                    continue
+                _calls[call_id] = threading.Event()
             threading.Thread(target=handle_call, args=(request_id, params), daemon=True).start()
         elif method == "$/cancel":
             with _state_lock:

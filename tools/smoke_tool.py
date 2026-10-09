@@ -57,7 +57,7 @@ ENVELOPE = validator_for("https://mentorbit.invalid/spec/0.1/object-envelope.sch
 
 def host_method_def(method: str, kind: str) -> str:
     """规范 4.5 / 5.4：去掉 host/ 前缀，按 / 与 . 分段驼峰拼接，例如 host/storage.get -> storageGetParams。"""
-    parts = re.split(r"[/.]", method.removeprefix("host/"))
+    parts = re.split(r"[/.]", method.removeprefix("host/").removeprefix("$/"))
     return parts[0] + "".join(p[:1].upper() + p[1:] for p in parts[1:]) + kind
 
 
@@ -143,6 +143,11 @@ class Host:
         request_id = f"q{self.next_id}"
         self.send({"id": request_id, "method": method, "params": params})
         return request_id
+
+    def send_raw(self, line: bytes) -> None:
+        """发送任意一行原始数据，用于检查插件对畸形消息的处理（规范 5.4）。"""
+        self.proc.stdin.write(line.rstrip(b"\n") + b"\n")
+        self.proc.stdin.flush()
 
     def recv(self, timeout: float = 5.0) -> dict:
         try:
@@ -352,6 +357,25 @@ def run(package: Path) -> int:
         expect(message.get("id") == rid and message.get("error", {}).get("code") == -32601, f"应返回 method_not_found：{message}")
         return "返回 -32601"
 
+    def malformed_messages() -> str:
+        """规范 5.4：收到畸形消息时回复对应错误码，且进程继续工作。"""
+        cases = [
+            ("不是合法 JSON", b"{not json", None, -32700),
+            ("不是 JSON 对象", b"[1, 2]", None, -32600),
+            ("缺少 method", json.dumps({"jsonrpc": "2.0", "id": "m3"}).encode(), "m3", -32600),
+            ("params 不是对象", json.dumps({"jsonrpc": "2.0", "id": "m4", "method": "tools/call", "params": "x"}).encode(), "m4", -32602),
+            ("tools/call 缺少 callId", json.dumps({"jsonrpc": "2.0", "id": "m5", "method": "tools/call",
+                                               "params": {"toolId": "x", "input": {}}}).encode(), "m5", -32602),
+        ]
+        for name, raw, expected_id, code in cases:
+            host.send_raw(raw)
+            message = host.recv()
+            expect(message.get("id") == expected_id and message.get("error", {}).get("code") == code,
+                   f"{name}：应返回 id={expected_id!r}、错误码 {code}，实际 {message}")
+        rid = host.request("tools/frobnicate", {})
+        expect(host.recv().get("id") == rid, "处理畸形消息后进程应继续响应")
+        return f"{len(cases)} 种畸形消息均返回正确错误码，进程继续工作"
+
     def shutdown(h: Host) -> str:
         rid = h.request("shutdown", {})
         message = h.recv()
@@ -371,6 +395,7 @@ def run(package: Path) -> int:
         check("业务失败 isError", business_failure)
         check("取消 $/cancel", cancellation)
         check("未知方法", unknown_method)
+        check("畸形消息", malformed_messages)
         check("关闭 shutdown/exit", lambda: shutdown(host))
     finally:
         host.close()

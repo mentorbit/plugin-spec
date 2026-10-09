@@ -69,13 +69,38 @@ function mount() {
   iframe.setAttribute('referrerpolicy', 'no-referrer')
   iframe.style.height = `${renderer.minHeight || 160}px`
   iframe.src = `/plugin/${renderer.entry}`
+  let loads = 0
+  iframe.addEventListener('load', () => {
+    // 规范 4.2：首次加载之后再次加载，说明渲染器让 iframe 发生了跳转，必须卸载
+    if (++loads > 1) showFallback('渲染器发生了页面跳转，已卸载')
+  })
   $('stage').append(iframe)
   clearTimeout(initTimer)
   initTimer = setTimeout(() => { if (!initialized) showFallback('5 秒内未完成初始化') }, 5000)
 }
 
+// 规范 4.3：宿主必须校验每条消息的结构（与 renderer-messages.schema.json 中各方法的 Params 定义一致）
+const isObj = v => v !== null && typeof v === 'object' && !Array.isArray(v)
+const onlyKeys = (p, keys) => Object.keys(p).every(k => keys.includes(k))
+const isKey = k => typeof k === 'string' && k.length >= 1 && k.length <= 64
+const PARAM_RULES = {
+  'ui/ready': p => onlyKeys(p, ['protocol']) && p.protocol === PROTOCOL,
+  'ui/resize': p => onlyKeys(p, ['height']) && Number.isInteger(p.height) && p.height >= 0 && p.height <= 10000,
+  'ui/suggestPrompt': p => onlyKeys(p, ['text']) && typeof p.text === 'string' && p.text.length >= 1 && p.text.length <= 500,
+  'ui/openLink': p => onlyKeys(p, ['url']) && typeof p.url === 'string' && p.url.length <= 2048 && /^https:\/\/\S+$/.test(p.url),
+  'state/get': p => onlyKeys(p, ['key']) && isKey(p.key),
+  // 规范 4.5：单个值不超过 16 KiB
+  'state/set': p => onlyKeys(p, ['key', 'value']) && isKey(p.key) && 'value' in p
+    && new Blob([JSON.stringify(p.value)]).size <= 16 * 1024,
+}
+
 function handle(message) {
-  const { id, method, params: p } = message
+  const { id, method, params: raw } = message
+  const p = raw === undefined ? {} : raw
+  if (method !== undefined && PARAM_RULES[method] && !(isObj(p) && PARAM_RULES[method](p))) {
+    if (id !== undefined) return fail(id, 'invalid_params', -32602)
+    return log('!', `丢弃参数不合规的通知：${method}`)
+  }
   if (method === undefined) { // 渲染器对宿主请求的响应
     if (message.error) return log('!', `渲染器返回错误：${message.error.message}`)
     if (id === 'init') {
@@ -104,7 +129,7 @@ function handle(message) {
       const box = document.createElement('div')
       box.className = 'suggest'
       const text = document.createElement('div')
-      text.textContent = `渲染器建议提问：${String(p?.text).slice(0, 500)}`
+      text.textContent = `渲染器建议提问：${p.text}`
       const send = document.createElement('button')
       send.textContent = '发送（模拟）'
       send.onclick = () => { log('·', `学习者确认发送：${p.text}`); box.remove() }

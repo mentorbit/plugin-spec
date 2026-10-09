@@ -155,6 +155,9 @@
       "properties": { "callId": { "$ref": "#/$defs/callId" } }
     },
     "emptyObject": { "type": "object", "additionalProperties": false, "maxProperties": 0 },
+    "shutdownParams": { "$ref": "#/$defs/emptyObject" },
+    "shutdownResult": { "$ref": "#/$defs/emptyObject" },
+    "exitParams": { "$ref": "#/$defs/emptyObject" },
     "storageGetParams": {
       "type": "object",
       "additionalProperties": false,
