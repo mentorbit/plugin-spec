@@ -80,6 +80,13 @@ class CheckFailed(Exception):
     pass
 
 
+class RecvTimeout(CheckFailed):
+    """在给定时间内没有收到插件消息。"""
+
+
+CANCEL_GRACE_SECONDS = 2.0  # 规范 5.4：发送 $/cancel 后等待插件响应的时间
+
+
 def expect(condition: bool, message: str) -> None:
     if not condition:
         raise CheckFailed(message)
@@ -141,7 +148,7 @@ class Host:
         try:
             message = self.inbox.get(timeout=timeout)
         except queue.Empty:
-            raise CheckFailed(f"{timeout} 秒内没有收到插件消息")
+            raise RecvTimeout(f"{timeout:.1f} 秒内没有收到插件消息")
         expect(message is not None, "插件进程意外退出")
         expect("__invalid__" not in message, f"插件输出了非 JSON 行：{message.get('__invalid__')!r}")
         assert_valid(MESSAGE, message, "插件消息")
@@ -209,9 +216,20 @@ class Host:
         self.active_calls[call_id] = {"learner": learner, "effect": tool["effect"]}
         request_id = self.request("tools/call", params)
         seen: list[str] = []
+        # 规范 5.4：按工具声明的 timeoutMs 等待；超时后发送 $/cancel，再等待片刻
+        deadline = time.monotonic() + params["timeoutMs"] / 1000
         try:
             while True:
-                message = self.recv()
+                try:
+                    message = self.recv(timeout=max(0.0, deadline - time.monotonic()))
+                except RecvTimeout:
+                    self.send({"method": "$/cancel", "params": {"callId": call_id}})
+                    try:
+                        late = self.recv(timeout=CANCEL_GRACE_SECONDS)
+                        detail = f"插件随后返回：{late.get('error', {}).get('data', {}).get('reason') or '结果'}"
+                    except RecvTimeout:
+                        detail = f"发送 $/cancel 后 {CANCEL_GRACE_SECONDS:.0f} 秒内仍无响应，宿主可以终止进程"
+                    raise CheckFailed(f"工具 {tool_id} 超过声明的 timeoutMs={params['timeoutMs']}；{detail}")
                 if "method" in message and "id" in message:
                     if hold_host:
                         return {"callId": call_id, "requestId": request_id, "held": message, "seen": seen}

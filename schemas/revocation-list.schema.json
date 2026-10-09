@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mentorbit.invalid/spec/0.1/revocation-list.schema.json",
+  "title": "吊销清单",
+  "description": "见规范 8.5。由插件目录发布，宿主定期拉取。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "generatedAt", "entries"],
+  "properties": {
+    "format": { "const": "mentorbit.revocation-list/0.1" },
+    "generatedAt": { "$ref": "tool-messages.schema.json#/$defs/timestamp" },
+    "entries": {
+      "type": "array",
+      "maxItems": 100000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["pluginId", "versions", "severity", "reason", "revokedAt"],
+        "properties": {
+          "pluginId": { "$ref": "manifest.schema.json#/$defs/pluginId" },
+          "versions": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "anyOf": [{ "const": "*" }, { "$ref": "manifest.schema.json#/$defs/semver" }] }
+          },
+          "severity": { "enum": ["low", "medium", "high", "critical"] },
+          "reason": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "revokedAt": { "$ref": "tool-messages.schema.json#/$defs/timestamp" }
+        },
+        "if": { "properties": { "versions": { "contains": { "const": "*" } } } },
+        "then": { "properties": { "versions": { "maxItems": 1 } } }
+      }
+    }
+  }
+}

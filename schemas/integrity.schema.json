@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mentorbit.invalid/spec/0.1/integrity.schema.json",
+  "title": "完整性文件（mentorbit.integrity.json）",
+  "description": "见规范 1.6。是否覆盖包内全部文件、摘要是否与文件内容一致，由校验工具检查。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["algorithm", "files"],
+  "properties": {
+    "algorithm": { "const": "sha256" },
+    "files": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 5000,
+      "propertyNames": { "$ref": "manifest.schema.json#/$defs/relPath" },
+      "additionalProperties": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+    }
+  }
+}

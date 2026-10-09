@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import io
 import json
 import re
 import shutil
@@ -29,7 +31,8 @@ class PackageCase(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
 
     def copy(self, example: str) -> Path:
-        target = Path(self.tmp.name) / example
+        # 每次复制都放进新的子目录，同一测试中的多个子用例互不干扰
+        target = Path(tempfile.mkdtemp(dir=self.tmp.name)) / example
         shutil.copytree(EXAMPLES / example, target, ignore=shutil.ignore_patterns("__pycache__"))
         return target
 
@@ -229,6 +232,102 @@ class IntegrityRules(PackageCase):
         (pkg / "extra.txt").write_text("x", encoding="utf-8")
         self.assertRejects(pkg, "未列出的文件")
 
+    def mutate_integrity(self, mutate) -> Path:
+        pkg = self.copy("intro-cs-content")
+        path = self.write_integrity(pkg)
+        data = json.loads(path.read_text(encoding="utf-8"))
+        result = mutate(data)
+        path.write_text(result if isinstance(result, str) else json.dumps(result), encoding="utf-8")
+        return pkg
+
+    def test_format_rules(self):
+        """规范 1.6：algorithm 必须为 sha256、摘要为小写十六进制、不得有其他字段；格式错误时报告而不崩溃。"""
+        cases = {
+            "algorithm 为 md5": (lambda d: {**d, "algorithm": "md5"}, "algorithm"),
+            "缺少 algorithm": (lambda d: {"files": d["files"]}, "algorithm"),
+            "摘要为大写": (lambda d: {**d, "files": {k: v.upper() for k, v in d["files"].items()}}, "files"),
+            "多出字段": (lambda d: {**d, "note": "x"}, "note"),
+            "files 为数组": (lambda d: {**d, "files": list(d["files"])}, "files"),
+            "不是合法 JSON": (lambda d: "{bad", "不是合法的 JSON"),
+            "路径越出包目录": (lambda d: {**d, "files": {**d["files"], "../x": "0" * 64}}, "files"),
+        }
+        for name, (mutate, fragment) in cases.items():
+            with self.subTest(name):
+                self.assertRejects(self.mutate_integrity(mutate), fragment)
+
+    def test_signature_file_is_excluded(self):
+        pkg = self.copy("intro-cs-content")
+        self.write_integrity(pkg)
+        (pkg / validate.SIGNATURE_NAME).write_text("{}", encoding="utf-8")
+        self.assertEqual(self.errors(pkg), "")
+
+    def test_listing_reserved_names_rejected(self):
+        pkg = self.mutate_integrity(lambda d: {**d, "files": {**d["files"], validate.SIGNATURE_NAME: "0" * 64}})
+        self.assertRejects(pkg, f"不得列出 {validate.SIGNATURE_NAME}")
+
+
+class RobustnessRules(PackageCase):
+    """异常输入必须被报告为错误，而不是让校验器抛出异常（规范 8.3 要求目录用校验器自动检查所有发布的插件）。"""
+
+    def assertReportsWithoutCrash(self, pkg: Path, fragment: str):
+        try:
+            errors = self.errors(pkg)
+        except Exception as exc:  # noqa: BLE001
+            self.fail(f"校验器崩溃：{type(exc).__name__}: {exc}")
+        self.assertIn(fragment, errors)
+
+    def test_non_utf8_lecture(self):
+        pkg = self.copy("intro-cs-content")
+        (pkg / "content/lectures/variables.md").write_bytes("变量".encode("gbk"))
+        self.assertReportsWithoutCrash(pkg, "不是 UTF-8 编码的文本")
+
+    def test_non_utf8_renderer_entry(self):
+        pkg = self.copy("flashcard-renderer")
+        (pkg / "renderer/index.html").write_bytes("<p>闪卡</p>".encode("gbk"))
+        self.assertReportsWithoutCrash(pkg, "不是 UTF-8 编码的文本")
+
+    def test_non_utf8_manifest(self):
+        pkg = self.copy("glossary-tool")
+        (pkg / validate.MANIFEST_NAME).write_bytes('{"id": "术语"}'.encode("gbk"))
+        self.assertReportsWithoutCrash(pkg, "不是 UTF-8 编码的文本")
+
+    def test_content_pack_path_is_directory(self):
+        pkg = self.copy("intro-cs-content")
+        (pkg / "content/dir.json").mkdir()
+        self.edit_json(pkg / validate.MANIFEST_NAME,
+                       lambda m: m["contributes"]["contentPacks"][0].update(path="content/dir.json"))
+        self.assertReportsWithoutCrash(pkg, "不是普通文件")
+
+    def test_lecture_path_is_directory(self):
+        pkg = self.copy("intro-cs-content")
+        (pkg / "content/lectures/dir.md").mkdir()
+        self.edit_json(pkg / "content/lectures.json",
+                       lambda d: d["lectures"][0].update(path="content/lectures/dir.md"))
+        self.assertReportsWithoutCrash(pkg, "不是普通文件")
+
+    def test_cli_survives_internal_error(self):
+        """单个包触发意外错误时，命令行计为失败并继续检查其他包。"""
+        original = validate.check_package
+        calls = []
+
+        def flaky(package, validators):
+            calls.append(package.name)
+            if package.name == "boom":
+                raise RuntimeError("模拟的意外错误")
+            return original(package, validators)
+
+        boom = Path(self.tmp.name) / "boom"
+        boom.mkdir()
+        validate.check_package = flaky
+        try:
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                code = validate.main([str(boom), str(EXAMPLES / "glossary-tool")])
+        finally:
+            validate.check_package = original
+        self.assertEqual(code, 1)
+        self.assertEqual(calls, ["boom", "glossary-tool"])
+        self.assertIn("校验器内部错误", out.getvalue())
+
 
 def spec_text(name: str) -> str:
     return (validate.ROOT / "spec" / name).read_text(encoding="utf-8")
@@ -260,6 +359,28 @@ class DocumentExamples(PackageCase):
         report = validate.check_package(pkg, VALIDATORS)
         self.assertEqual(report.errors, [])
         self.assertEqual(report.warnings, [])
+
+    def test_integrity_example_matches_schema(self):
+        """第 01 章 1.6 的完整性文件示例必须符合 integrity.schema.json。"""
+        example = json_block_after(spec_text("01-包与清单.md"), "## 1.6")
+        self.assertEqual(validate.schema_errors(VALIDATORS["integrity.schema.json"], example), [])
+
+    def test_revocation_list_example_and_rules(self):
+        """第 08 章 8.5 的吊销清单示例必须合规，且 Schema 能拦住不合规的写法。"""
+        validator = VALIDATORS["revocation-list.schema.json"]
+        example = json_block_after(spec_text("08-安全与审核.md"), "## 8.5")
+        self.assertEqual(validate.schema_errors(validator, example), [])
+        entry = example["entries"][0]
+        invalid = {
+            "* 与具体版本同时出现": {**entry, "versions": ["*", "1.0.0"]},
+            "版本范围表达式": {**entry, "versions": [">=1.0.0"]},
+            "未定义的严重程度": {**entry, "severity": "urgent"},
+            "缺少原因": {k: v for k, v in entry.items() if k != "reason"},
+            "空版本列表": {**entry, "versions": []},
+        }
+        for name, bad in invalid.items():
+            with self.subTest(name):
+                self.assertNotEqual(validate.schema_errors(validator, {**example, "entries": [bad]}), [])
 
 
 class ProtocolSchemaConsistency(unittest.TestCase):

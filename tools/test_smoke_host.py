@@ -13,22 +13,31 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import smoke_tool  # noqa: E402
 
 
-class FakeHost(smoke_tool.Host):
-    """跳过进程启动，记录发给插件的消息；recv 依次返回预设的插件消息。"""
+TIMEOUT = "TIMEOUT"  # 脚本标记：这一次等待超时，没有收到消息
 
-    def __init__(self, grants: list[str], manifest: dict | None = None, script: list[dict] | None = None):
+
+class FakeHost(smoke_tool.Host):
+    """跳过进程启动，记录发给插件的消息；recv 依次返回预设的插件消息，并记录每次的等待时长。"""
+
+    def __init__(self, grants: list[str], manifest: dict | None = None, script: list | None = None):
         self.grants = grants
         self.manifest = manifest or {}
         self.storage = {}
         self.active_calls = {}
         self.sent: list[dict] = []
         self.script = list(script or [])
+        self.waits: list[float] = []
         self.next_id = 0
 
     def send(self, message: dict) -> None:
         self.sent.append(message)
 
     def recv(self, timeout: float = 5.0) -> dict:
+        self.waits.append(timeout)
+        if not self.script or self.script[0] == TIMEOUT:
+            if self.script:
+                self.script.pop(0)
+            raise smoke_tool.RecvTimeout(f"{timeout} 秒内没有收到插件消息")
         return self.script.pop(0)
 
 
@@ -104,6 +113,41 @@ class ReadOnlyResultTests(unittest.TestCase):
     def test_read_only_with_objects_fails(self):
         with self.assertRaises(smoke_tool.CheckFailed):
             self.call_with_result({"summary": "ok", "objects": [{"objectType": "x_y", "value": {}, "fallbackText": "x"}]})
+
+
+class TimeoutTests(unittest.TestCase):
+    """规范 5.4：宿主按工具声明的 timeoutMs 等待，超时后发送 $/cancel。"""
+
+    @staticmethod
+    def manifest(timeout_ms: int) -> dict:
+        return {"contributes": {"tools": [{
+            "id": "slow", "effect": "creates_object", "timeoutMs": timeout_ms,
+            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        }]}}
+
+    def test_waits_for_declared_timeout_not_a_fixed_value(self):
+        host = FakeHost([], self.manifest(10_000), script=[{"jsonrpc": "2.0", "id": "q1", "result": {"summary": "ok"}}])
+        host.call_tool("slow", {})
+        self.assertGreater(host.waits[0], 9.0)
+        self.assertLessEqual(host.waits[0], 10.0)
+
+    def test_timeout_sends_cancel_then_fails(self):
+        host = FakeHost([], self.manifest(1_000), script=[TIMEOUT, TIMEOUT])
+        with self.assertRaises(smoke_tool.CheckFailed) as ctx:
+            host.call_tool("slow", {})
+        cancels = [m for m in host.sent if m.get("method") == "$/cancel"]
+        self.assertEqual(len(cancels), 1)
+        self.assertEqual(host.waits[1], smoke_tool.CANCEL_GRACE_SECONDS)
+        self.assertIn("timeoutMs=1000", str(ctx.exception))
+        self.assertNotIn(cancels[0]["params"]["callId"], host.active_calls)
+
+    def test_timeout_reports_late_cancelled_response(self):
+        cancelled = {"jsonrpc": "2.0", "id": "q1",
+                     "error": {"code": -32004, "message": "cancelled", "data": {"reason": "cancelled"}}}
+        host = FakeHost([], self.manifest(1_000), script=[TIMEOUT, cancelled])
+        with self.assertRaises(smoke_tool.CheckFailed) as ctx:
+            host.call_tool("slow", {})
+        self.assertIn("cancelled", str(ctx.exception))
 
 
 if __name__ == "__main__":

@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SCHEMAS = ROOT / "schemas"
 MANIFEST_NAME = "mentorbit.plugin.json"
 INTEGRITY_NAME = "mentorbit.integrity.json"
+SIGNATURE_NAME = "mentorbit.signature.json"  # 规范 8.2 预留，签名对象是完整性文件，因而不计入完整性清单
 
 # 规范 2.2：每个权限可申请的最低信任等级
 TIER_ORDER = ["community", "verified", "official"]
@@ -64,6 +65,32 @@ class Report:
 
     def warn(self, where: str, message: str) -> None:
         self.warnings.append(f"{where}: {message}")
+
+
+_UNREADABLE = object()
+
+
+def read_text(path: Path, report: Report, where: str) -> str | None:
+    """读取 UTF-8 文本；编码或文件系统错误记为校验错误，而不是让校验器崩溃。"""
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        report.error(where, "不是 UTF-8 编码的文本")
+    except OSError as exc:
+        report.error(where, f"无法读取：{exc.strerror or type(exc).__name__}")
+    return None
+
+
+def read_json(path: Path, report: Report, where: str):
+    """读取 JSON；失败时报告错误并返回 _UNREADABLE（JSON 本身可以是 null，不能用 None 表示失败）。"""
+    text = read_text(path, report, where)
+    if text is None:
+        return _UNREADABLE
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        report.error(where, f"不是合法的 JSON：{exc}")
+        return _UNREADABLE
 
 
 def schema_errors(validator: Draft202012Validator, instance) -> list[str]:
@@ -123,8 +150,14 @@ def safe_path(package: Path, rel: str, report: Report, where: str) -> Path | Non
     except FileNotFoundError:
         report.error(where, f"文件不存在 {rel}")
         return None
+    except OSError as exc:
+        report.error(where, f"无法访问 {rel}：{exc.strerror or type(exc).__name__}")
+        return None
     if package.resolve() not in resolved.parents and resolved != package.resolve():
         report.error(where, f"路径越出包目录 {rel}")
+        return None
+    if not resolved.is_file():
+        report.error(where, f"不是普通文件 {rel}")
         return None
     return resolved
 
@@ -337,10 +370,8 @@ def check_package(package: Path, validators: dict[str, Draft202012Validator]) ->
     if not manifest_path.is_file():
         report.error(MANIFEST_NAME, "缺少清单文件")
         return report
-    try:
-        manifest = load_json(manifest_path)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        report.error(MANIFEST_NAME, f"不是合法的 UTF-8 JSON：{exc}")
+    manifest = read_json(manifest_path, report, MANIFEST_NAME)
+    if manifest is _UNREADABLE:
         return report
 
     for problem in schema_errors(validators["manifest.schema.json"], manifest):
@@ -374,8 +405,12 @@ def check_package(package: Path, validators: dict[str, Draft202012Validator]) ->
     # 图标与运行时
     if "icon" in manifest:
         icon = safe_path(package, manifest["icon"], report, "icon")
-        if icon and icon.read_bytes()[:8] != b"\x89PNG\r\n\x1a\n":
-            report.error("icon", "不是 PNG 文件")
+        if icon:
+            try:
+                if icon.read_bytes()[:8] != b"\x89PNG\r\n\x1a\n":
+                    report.error("icon", "不是 PNG 文件")
+            except OSError as exc:
+                report.error("icon", f"无法读取：{exc.strerror or type(exc).__name__}")
     if "runtime" in manifest:
         safe_path(package, manifest["runtime"]["entry"], report, "runtime.entry")
         if not contributes.get("tools"):
@@ -417,8 +452,8 @@ def check_package(package: Path, validators: dict[str, Draft202012Validator]) ->
         if r.get("minHeight") and r.get("maxHeight") and r["minHeight"] > r["maxHeight"]:
             report.error(w, "minHeight 大于 maxHeight")
         entry = safe_path(package, r["entry"], report, f"{w}.entry")
-        if entry:
-            html = entry.read_text(encoding="utf-8")
+        html = read_text(entry, report, f"{w}.entry") if entry else None
+        if html is not None:
             # 规范 4.2：CSP 禁止内联脚本与包外资源
             if re.search(r"<script(?![^>]*\bsrc=)[^>]*>", html, re.I):
                 report.error(f"{w}.entry", "沙箱 CSP 下内联脚本不会执行，脚本必须放在包内文件中")
@@ -438,10 +473,8 @@ def check_package(package: Path, validators: dict[str, Draft202012Validator]) ->
         path = safe_path(package, c["path"], report, w)
         if not path:
             continue
-        try:
-            data = load_json(path)
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            report.error(w, f"不是合法的 UTF-8 JSON：{exc}")
+        data = read_json(path, report, w)
+        if data is _UNREADABLE:
             index.invalid.add(c["id"])
             continue
         problems = schema_errors(validators[f"content/{c['kind']}.schema.json"], data)
@@ -469,8 +502,9 @@ def check_package(package: Path, validators: dict[str, Draft202012Validator]) ->
                 for ref in lec["nodes"]:
                     index.resolve(ref, plugin_id, report, f"{w}/{lec['id']}/nodes", "course-graph")
                 md = safe_path(package, lec["path"], report, f"{w}/{lec['id']}/path")
-                if md:
-                    check_markdown(md.read_text(encoding="utf-8"), package, report, f"{w}/{lec['id']}")
+                text = read_text(md, report, f"{w}/{lec['id']}/path") if md else None
+                if text is not None:
+                    check_markdown(text, package, report, f"{w}/{lec['id']}")
 
     # 容量（规范 1.1：宿主必须至少接受 20 MiB、5000 个文件）
     files = [p for p in package.rglob("*") if p.is_file() and "__pycache__" not in p.parts]
@@ -478,23 +512,47 @@ def check_package(package: Path, validators: dict[str, Draft202012Validator]) ->
     if size > 20 * 1024 * 1024 or len(files) > 5000:
         report.warn("包", f"{len(files)} 个文件、{size} 字节，超过宿主必须接受的下限，可能被拒绝")
 
-    # 完整性（规范 1.6）：存在时逐一核对
+    # 完整性（规范 1.6）：存在时先按 Schema 校验格式，再逐一核对
     integrity_path = package / INTEGRITY_NAME
     if integrity_path.is_file():
-        integrity = load_json(integrity_path)
-        listed = integrity.get("files", {})
-        actual = {p.relative_to(package).as_posix(): p for p in files if p.name != INTEGRITY_NAME}
-        for rel in sorted(set(listed) | set(actual)):
-            if rel not in actual:
-                report.error(INTEGRITY_NAME, f"列出但不存在：{rel}")
-            elif rel not in listed:
-                report.error(INTEGRITY_NAME, f"未列出的文件：{rel}")
-            elif hashlib.sha256(actual[rel].read_bytes()).hexdigest() != listed[rel]:
-                report.error(INTEGRITY_NAME, f"哈希不一致：{rel}")
+        check_integrity(package, files, integrity_path, validators, report)
     else:
         report.notes.append(f"未包含 {INTEGRITY_NAME}，按开发目录处理（分发归档必须包含）")
 
     return report
+
+
+def check_integrity(package: Path, files: list[Path], path: Path,
+                    validators: dict[str, Draft202012Validator], report: Report) -> None:
+    integrity = read_json(path, report, INTEGRITY_NAME)
+    if integrity is _UNREADABLE:
+        return
+    problems = schema_errors(validators["integrity.schema.json"], integrity)
+    for problem in problems:
+        report.error(INTEGRITY_NAME, problem)
+    if problems:
+        return
+    listed = integrity["files"]
+    for name in (INTEGRITY_NAME, SIGNATURE_NAME):
+        if name in listed:
+            report.error(INTEGRITY_NAME, f"不得列出 {name}")
+    actual = {p.relative_to(package).as_posix(): p for p in files
+              if p.relative_to(package).as_posix() not in (INTEGRITY_NAME, SIGNATURE_NAME)}
+    for rel in sorted(set(listed) | set(actual)):
+        if rel in (INTEGRITY_NAME, SIGNATURE_NAME):
+            continue
+        if rel not in actual:
+            report.error(INTEGRITY_NAME, f"列出但不存在：{rel}")
+        elif rel not in listed:
+            report.error(INTEGRITY_NAME, f"未列出的文件：{rel}")
+        else:
+            try:
+                digest = hashlib.sha256(actual[rel].read_bytes()).hexdigest()
+            except OSError as exc:
+                report.error(INTEGRITY_NAME, f"无法读取 {rel}：{exc.strerror or type(exc).__name__}")
+                continue
+            if digest != listed[rel]:
+                report.error(INTEGRITY_NAME, f"哈希不一致：{rel}")
 
 
 def main(argv: list[str]) -> int:
@@ -513,7 +571,11 @@ def main(argv: list[str]) -> int:
     validators = {name: Draft202012Validator(schema, registry=registry) for name, schema in schemas.items()}
     failed = False
     for arg in argv:
-        report = check_package(Path(arg), validators)
+        try:
+            report = check_package(Path(arg), validators)
+        except Exception as exc:  # noqa: BLE001 - 兜底：单个包的意外错误不影响其他包，并计为失败
+            report = Report(arg)
+            report.error("校验器内部错误", f"{type(exc).__name__}: {exc}")
         status = "失败" if report.errors else "通过"
         print(f"\n[{status}] {report.name}")
         for e in report.errors:
