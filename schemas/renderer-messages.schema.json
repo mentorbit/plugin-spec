@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mentorbit.invalid/spec/0.1/renderer-messages.schema.json",
   "title": "渲染器消息协议（mentorbit.renderer/0.1）",
-  "description": "外形与工具协议相同（JSON-RPC 2.0），错误对象复用 tool-messages.schema.json。",
+  "description": "外形与工具协议相同（JSON-RPC 2.0），错误对象复用 tool-messages.schema.json。各方法的参数与结果按规范 4.5 的规则命名。",
   "oneOf": [
     { "$ref": "tool-messages.schema.json#/$defs/request" },
     { "$ref": "tool-messages.schema.json#/$defs/notification" },
@@ -10,12 +10,8 @@
     { "$ref": "tool-messages.schema.json#/$defs/errorResponse" }
   ],
   "$defs": {
-    "readyParams": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["protocol"],
-      "properties": { "protocol": { "const": "mentorbit.renderer/0.1" } }
-    },
+    "emptyObject": { "type": "object", "additionalProperties": false, "maxProperties": 0 },
+    "stateKey": { "type": "string", "minLength": 1, "maxLength": 64 },
     "theme": {
       "type": "object",
       "additionalProperties": false,
@@ -29,7 +25,7 @@
         }
       }
     },
-    "initParams": {
+    "renderInitParams": {
       "type": "object",
       "additionalProperties": false,
       "required": ["protocol", "rendererId", "object", "locale", "theme", "grants"],
@@ -42,7 +38,8 @@
         "grants": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
       }
     },
-    "objectUpdatedParams": {
+    "renderInitResult": { "$ref": "#/$defs/emptyObject" },
+    "renderObjectUpdatedParams": {
       "type": "object",
       "additionalProperties": false,
       "required": ["object"],
@@ -54,35 +51,51 @@
       "required": ["theme"],
       "properties": { "theme": { "$ref": "#/$defs/theme" } }
     },
-    "resizeParams": {
+    "renderDisposeParams": { "$ref": "#/$defs/emptyObject" },
+    "uiReadyParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol"],
+      "properties": { "protocol": { "const": "mentorbit.renderer/0.1" } }
+    },
+    "uiResizeParams": {
       "type": "object",
       "additionalProperties": false,
       "required": ["height"],
       "properties": { "height": { "type": "integer", "minimum": 0, "maximum": 10000 } }
     },
-    "suggestPromptParams": {
+    "uiSuggestPromptParams": {
       "type": "object",
       "additionalProperties": false,
       "required": ["text"],
       "properties": { "text": { "type": "string", "minLength": 1, "maxLength": 500 } }
     },
-    "openLinkParams": {
+    "uiSuggestPromptResult": { "$ref": "#/$defs/emptyObject" },
+    "uiOpenLinkParams": {
       "type": "object",
       "additionalProperties": false,
       "required": ["url"],
       "properties": { "url": { "type": "string", "pattern": "^https://[^\\s]+$", "maxLength": 2048 } }
     },
+    "uiOpenLinkResult": { "$ref": "#/$defs/emptyObject" },
     "stateGetParams": {
       "type": "object",
       "additionalProperties": false,
       "required": ["key"],
-      "properties": { "key": { "type": "string", "minLength": 1, "maxLength": 64 } }
+      "properties": { "key": { "$ref": "#/$defs/stateKey" } }
+    },
+    "stateGetResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value"],
+      "properties": { "value": {} }
     },
     "stateSetParams": {
       "type": "object",
       "additionalProperties": false,
       "required": ["key", "value"],
-      "properties": { "key": { "type": "string", "minLength": 1, "maxLength": 64 }, "value": {} }
-    }
+      "properties": { "key": { "$ref": "#/$defs/stateKey" }, "value": {} }
+    },
+    "stateSetResult": { "$ref": "#/$defs/emptyObject" }
   }
 }

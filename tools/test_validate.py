@@ -264,14 +264,43 @@ class DocumentExamples(PackageCase):
 
 class ProtocolSchemaConsistency(unittest.TestCase):
     TOOL_ID = "https://mentorbit.invalid/spec/0.1/tool-messages.schema.json"
+    RENDERER_ID = "https://mentorbit.invalid/spec/0.1/renderer-messages.schema.json"
 
-    def defs_validator(self, name: str):
-        return validate.Draft202012Validator({"$ref": f"{self.TOOL_ID}#/$defs/{name}"}, registry=REGISTRY)
+    def defs_validator(self, name: str, schema_id: str = TOOL_ID):
+        return validate.Draft202012Validator({"$ref": f"{schema_id}#/$defs/{name}"}, registry=REGISTRY)
 
     @staticmethod
     def def_name(method: str, kind: str) -> str:
-        parts = method.removeprefix("host/").replace(".", "_").split("_")
+        """规范 4.5 / 5.4：去掉 host/ 前缀，按 / 与 . 分段驼峰拼接，再加 Params 或 Result。"""
+        parts = re.split(r"[/.]", method.removeprefix("host/"))
         return parts[0] + "".join(p[:1].upper() + p[1:] for p in parts[1:]) + kind
+
+    def test_every_renderer_method_has_schema_definitions(self):
+        """第 04 章方法表中的请求必须有 Params 与 Result，通知只有 Params。"""
+        rows = re.findall(r"^\| `([a-z]+/[A-Za-z]+)` \| (请求|通知) \|", spec_text("04-渲染器.md"), re.M)
+        self.assertEqual(len(rows), 10)
+        defs = SCHEMAS["renderer-messages.schema.json"]["$defs"]
+        for method, kind in rows:
+            with self.subTest(method=method):
+                self.assertIn(self.def_name(method, "Params"), defs)
+                if kind == "请求":
+                    self.assertIn(self.def_name(method, "Result"), defs)
+                else:
+                    self.assertNotIn(self.def_name(method, "Result"), defs)
+
+    def test_renderer_method_samples(self):
+        cases = [
+            ("stateGetResult", {"value": None}, True),
+            ("stateGetResult", {}, False),
+            ("uiSuggestPromptParams", {"text": "x" * 500}, True),
+            ("uiSuggestPromptParams", {"text": "x" * 501}, False),
+            ("uiOpenLinkParams", {"url": "http://example.com"}, False),
+            ("renderDisposeParams", {}, True),
+            ("uiReadyParams", {"protocol": "mentorbit.renderer/0.1"}, True),
+        ]
+        for name, sample, ok in cases:
+            with self.subTest(name=name, sample=sample):
+                self.assertEqual(self.defs_validator(name, self.RENDERER_ID).is_valid(sample), ok)
 
     def test_every_host_method_in_spec_has_schema_definitions(self):
         methods = re.findall(r"^\| `(host/[a-z.]+)` \|", spec_text("05-对象与工具.md"), re.M)
@@ -308,6 +337,43 @@ class ProtocolSchemaConsistency(unittest.TestCase):
         for name, sample in invalid.items():
             with self.subTest(invalid=name):
                 self.assertFalse(self.defs_validator(name).is_valid(sample))
+
+
+class PermissionTierConsistency(unittest.TestCase):
+    # 第 02 章表格中带占位符的权限，用一个具体值代入后交给校验器判断
+    CONCRETE = {
+        "network:<origin>": "network:https://api.example.com",
+        "objects.read:<插件 ID>/<对象类型>": "objects.read:example.glossary/glossary_entry",
+        "learner.read:<维度>": "learner.read:knowledge",
+        "evidence.propose:<事件类型>": "evidence.propose:practice.attempt_submitted",
+    }
+
+    def test_validator_tiers_match_permission_table(self):
+        """校验器的最低信任等级规则必须与第 02 章 2.2 的权限表一致。"""
+        rows = re.findall(r"^\| `([^`]+)` \| [^|]+\| `(community|verified|official)` \|", spec_text("02-权限与信任.md"), re.M)
+        self.assertEqual(len(rows), 8)
+        for permission, tier in rows:
+            with self.subTest(permission=permission):
+                self.assertEqual(validate.permission_min_tier(self.CONCRETE.get(permission, permission)), tier)
+
+
+class ExampleSamples(unittest.TestCase):
+    def test_sample_objects_match_declared_schemas(self):
+        """examples/*/samples/ 下的样例对象必须符合其插件声明的对象类型 Schema。"""
+        samples = sorted(EXAMPLES.glob("*/samples/*.json"))
+        self.assertTrue(samples, "没有找到任何样例对象")
+        for path in samples:
+            with self.subTest(sample=path.relative_to(EXAMPLES).as_posix()):
+                package = path.parent.parent
+                manifest = json.loads((package / validate.MANIFEST_NAME).read_text(encoding="utf-8"))
+                sample = json.loads(path.read_text(encoding="utf-8"))
+                declared = {o["id"]: o for o in manifest["contributes"].get("objectTypes", [])}
+                self.assertIn(sample["objectType"], declared)
+                schema = json.loads((package / declared[sample["objectType"]]["schema"]).read_text(encoding="utf-8"))
+                errors = [e.message for e in validate.Draft202012Validator(schema).iter_errors(sample["value"])]
+                self.assertEqual(errors, [])
+                self.assertTrue(1 <= len(sample["fallbackText"]) <= 2000)
+                self.assertLessEqual(len(json.dumps(sample["value"], ensure_ascii=False).encode("utf-8")), 128 * 1024)
 
 
 if __name__ == "__main__":

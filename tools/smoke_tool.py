@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import re
 import subprocess
 import sys
 import tempfile
@@ -55,8 +56,8 @@ ENVELOPE = validator_for("https://mentorbit.invalid/spec/0.1/object-envelope.sch
 
 
 def host_method_def(method: str, kind: str) -> str:
-    """规范 5.4：host/storage.get -> storageGetParams / storageGetResult。"""
-    parts = method.removeprefix("host/").replace(".", "_").split("_")
+    """规范 4.5 / 5.4：去掉 host/ 前缀，按 / 与 . 分段驼峰拼接，例如 host/storage.get -> storageGetParams。"""
+    parts = re.split(r"[/.]", method.removeprefix("host/"))
     return parts[0] + "".join(p[:1].upper() + p[1:] for p in parts[1:]) + kind
 
 
