@@ -26,7 +26,7 @@ Mentorbit 由固定的内核与有限的扩展点组成。0.1 开放三类扩展
 | [附录 A](spec/附录A-开放问题.md) | 待决事项 | — |
 | [附录 B](spec/附录B-数值上限.md) | 各字段的长度、数量与取值上限，由 Schema 生成 | 草案 |
 
-状态标签的定义见 [7.4](spec/07-版本与演进.md#74-状态标签)。正文与 [`schemas/`](schemas/)（JSON Schema 2020-12）不一致时，以正文为准。
+状态标签的定义见 [7.4](spec/07-版本与演进.md#74-状态标签)。规范由正文、附录 B 与 [`schemas/`](schemas/)（JSON Schema 2020-12）共同组成，冲突时的优先级见 [0.7](spec/00-概述与约定.md#07-规范的组成与优先级)。
 
 ## 仓库结构
 
@@ -35,12 +35,12 @@ spec/       规范正文
 schemas/    JSON Schema
 examples/   示例插件：内容包、渲染器、工具
 tools/      校验器、冒烟测试宿主、渲染器开发宿主、附录 B 生成器
-.github/    持续集成（Windows、Linux、macOS）
+.github/    持续集成（Windows、Linux、macOS）与依赖自动更新
 ```
 
 ## 校验
 
-需要 Python 3.10 及以上版本。
+运行本仓库的工具需要 Python 3.10 及以上版本。这与插件运行环境的版本要求无关，后者见 [1.5](spec/01-包与清单.md#15-运行时)。
 
 Windows（PowerShell）：
 
@@ -65,7 +65,7 @@ python3 -m venv .venv
 | 工具 | 用途 |
 |---|---|
 | `tools/validate.py` | 校验插件包：清单、权限、路径、引用完整性、对象 Schema、渲染器入口、受限 Markdown、完整性文件 |
-| `tools/smoke_tool.py` | 按第 05 章协议运行工具插件，检查握手、回调、取消、超时、畸形消息与关闭 |
+| `tools/smoke_tool.py` | 按第 05 章协议运行工具插件，检查握手、回调、并发、取消、超时、权限撤销、大小上限、畸形消息与关闭；目前只支持 `python3` 插件 |
 | `tools/renderer_host/serve.py` | 渲染器开发宿主，按第 04 章要求加载渲染器，默认监听 `http://127.0.0.1:8765/` |
 | `tools/gen_limits.py` | 根据 Schema 生成附录 B；`--check` 只检查是否一致 |
 | `tools/test_*.py` | 单元测试：校验器反例与模糊测试、冒烟宿主、渲染器开发宿主，以及正文、示例与 Schema 的一致性 |

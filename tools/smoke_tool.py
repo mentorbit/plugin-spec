@@ -3,7 +3,8 @@
 用法：python tools/smoke_tool.py <工具插件包目录>
 
 这不是生产宿主，只用来证明协议可以被实现，并检查插件行为：握手、输入校验、
-宿主回调（私有存储）、对象校验与封装、业务失败、取消、可选权限被拒、未知方法、关闭。
+宿主回调（私有存储）、对象校验与封装、业务失败、并发调用、调用途中撤销权限、取消、超时、
+大小上限、畸形消息、可选权限被拒、未知方法、关闭。
 目前只支持 interpreter 为 python3 的插件。
 """
 
@@ -85,6 +86,13 @@ class RecvTimeout(CheckFailed):
 
 
 CANCEL_GRACE_SECONDS = 2.0  # 规范 5.4：发送 $/cancel 后等待插件响应的时间
+MAX_LINE_BYTES = 4 * 1024 * 1024  # 规范 5.4：单行消息上限
+MAX_OBJECT_BYTES = 128 * 1024  # 规范 5.2：对象 value 序列化后的上限
+MAX_STORAGE_VALUE_BYTES = 64 * 1024  # 规范 5.4：私有存储单个值的上限
+
+
+def json_size(value) -> int:
+    return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
 
 
 def expect(condition: bool, message: str) -> None:
@@ -126,6 +134,9 @@ class Host:
 
     def _read(self) -> None:
         for raw in self.proc.stdout:
+            if len(raw.rstrip(b"\r\n")) > MAX_LINE_BYTES:
+                self.inbox.put({"__oversize__": len(raw)})
+                continue
             try:
                 message = json.loads(raw.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError):
@@ -155,6 +166,7 @@ class Host:
         except queue.Empty:
             raise RecvTimeout(f"{timeout:.1f} 秒内没有收到插件消息")
         expect(message is not None, "插件进程意外退出")
+        expect("__oversize__" not in message, f"插件输出的单行消息超过 4 MiB：{message.get('__oversize__')} 字节")
         expect("__invalid__" not in message, f"插件输出了非 JSON 行：{message.get('__invalid__')!r}")
         assert_valid(MESSAGE, message, "插件消息")
         return message
@@ -194,6 +206,8 @@ class Host:
         if method == "host/storage.get":
             result = {"value": self.storage.get(key)}
         elif method == "host/storage.set":
+            if json_size(params["value"]) > MAX_STORAGE_VALUE_BYTES:
+                return deny("invalid_params", -32602)  # 规范 5.4：单个值超过 64 KiB
             self.storage[key] = params["value"]
             result = {}
         elif method == "host/storage.delete":
@@ -204,13 +218,13 @@ class Host:
         assert_valid(validator_for(f"{TOOL_SCHEMA_ID}#/$defs/{host_method_def(method, 'Result')}"), result, f"{method} 结果")
         self.send({"id": request_id, "result": result})
 
-    def call_tool(self, tool_id: str, tool_input: dict, learner: str = "learner-ref-0001", hold_host=False):
-        """发起 tools/call 并处理期间的宿主回调。hold_host=True 时在第一个回调处暂停，返回控制权。"""
+    def start_call(self, tool_id: str, tool_input: dict, learner: str):
+        """校验输入并发出 tools/call；输入不合格时返回 None 与错误列表。"""
         tool = next(t for t in self.manifest["contributes"]["tools"] if t["id"] == tool_id)
         # 规范 5.4：宿主先按 inputSchema 校验输入，再交给插件
         errors = list(Draft202012Validator(tool["inputSchema"]).iter_errors(tool_input))
         if errors:
-            return {"rejectedByHost": [e.message for e in errors]}
+            return None, [e.message for e in errors]
         call_id = uuid.uuid4().hex
         params = {
             "callId": call_id, "toolId": tool_id, "input": tool_input,
@@ -219,7 +233,51 @@ class Host:
         }
         assert_valid(DEFS["toolsCallParams"], params, "tools/call 参数")
         self.active_calls[call_id] = {"learner": learner, "effect": tool["effect"]}
-        request_id = self.request("tools/call", params)
+        return {"tool": tool, "callId": call_id, "requestId": self.request("tools/call", params),
+                "timeoutMs": params["timeoutMs"]}, None
+
+    @staticmethod
+    def check_result(tool: dict, message: dict) -> None:
+        objects = message.get("result", {}).get("objects") or []
+        # 规范 5.3：read_only 工具产出对象时，宿主丢弃对象并视为失败
+        if tool["effect"] == "read_only":
+            expect(not objects, "read_only 工具不得产出对象")
+        # 规范 5.2：对象 value 序列化后不得超过 128 KiB
+        for obj in objects:
+            expect(json_size(obj.get("value")) <= MAX_OBJECT_BYTES, f"对象 {obj.get('objectType')} 的 value 超过 128 KiB")
+
+    def call_concurrently(self, calls: list[tuple[str, dict]], learner: str = "learner-ref-0001") -> dict:
+        """同时发出多个 tools/call，交错处理宿主回调，直到全部返回（规范 5.4：插件可能收到并发调用）。"""
+        started = []
+        for tool_id, tool_input in calls:
+            call, errors = self.start_call(tool_id, tool_input, learner)
+            expect(call is not None, f"输入未通过宿主校验：{errors}")
+            started.append(call)
+        pending = {c["requestId"]: c for c in started}
+        responses, seen = {}, []
+        deadline = time.monotonic() + max(c["timeoutMs"] for c in started) / 1000
+        try:
+            while pending:
+                message = self.recv(timeout=max(0.0, deadline - time.monotonic()))
+                if "method" in message and "id" in message:
+                    self.answer_host_request(message, seen)
+                    continue
+                expect(message.get("id") in pending, f"收到不属于这些调用的消息：{message}")
+                call = pending.pop(message["id"])
+                self.check_result(call["tool"], message)
+                responses[call["requestId"]] = message
+        finally:
+            for c in started:
+                self.active_calls.pop(c["callId"], None)
+        return {"responses": [responses[c["requestId"]] for c in started], "seen": seen}
+
+    def call_tool(self, tool_id: str, tool_input: dict, learner: str = "learner-ref-0001", hold_host=False):
+        """发起 tools/call 并处理期间的宿主回调。hold_host=True 时在第一个回调处暂停，返回控制权。"""
+        call, errors = self.start_call(tool_id, tool_input, learner)
+        if call is None:
+            return {"rejectedByHost": errors}
+        tool, call_id, request_id = call["tool"], call["callId"], call["requestId"]
+        params = {"timeoutMs": call["timeoutMs"]}
         seen: list[str] = []
         # 规范 5.4：按工具声明的 timeoutMs 等待；超时后发送 $/cancel，再等待片刻
         deadline = time.monotonic() + params["timeoutMs"] / 1000
@@ -241,9 +299,7 @@ class Host:
                     self.answer_host_request(message, seen)
                     continue
                 expect(message.get("id") == request_id, f"收到不属于本次调用的消息：{message}")
-                # 规范 5.3：read_only 工具产出对象时，宿主丢弃对象并视为失败
-                if tool["effect"] == "read_only":
-                    expect(not message.get("result", {}).get("objects"), "read_only 工具不得产出对象")
+                self.check_result(tool, message)
                 return {"callId": call_id, "message": message, "seen": seen}
         finally:
             if not hold_host:
@@ -357,6 +413,35 @@ def run(package: Path) -> int:
         expect(message.get("id") == rid and message.get("error", {}).get("code") == -32601, f"应返回 method_not_found：{message}")
         return "返回 -32601"
 
+    def concurrent_calls() -> str:
+        """规范 5.4：插件可能收到并发的 tools/call，每个调用的回调与结果不得串线。"""
+        terms = ["变量", "函数", "循环"]
+        out = host.call_concurrently([("lookup_term", {"term": t}) for t in terms], learner="learner-ref-0002")
+        for term, message in zip(terms, out["responses"]):
+            result = message.get("result")
+            expect(result is not None and not result.get("isError"), f"并发调用 {term} 失败：{message}")
+            value = (result.get("objects") or [{}])[0].get("value", {})
+            expect(value.get("term") == term, f"并发调用结果串线：请求 {term}，得到 {value.get('term')}")
+        return f"{len(terms)} 个并发调用各自返回正确结果；回调 {len(out['seen'])} 次"
+
+    def revoked_mid_call() -> str:
+        """规范 2.3：调用途中权限被撤销时，插件收到 permission_denied 后必须妥善处理，不得崩溃。"""
+        out = host.call_tool("lookup_term", {"term": "循环"}, hold_host=True)
+        expect("held" in out, f"预期插件先回调存储，实际：{out}")
+        saved = list(host.grants)
+        host.grants = [g for g in host.grants if g != "storage.plugin"]
+        try:
+            host.answer_host_request(out["held"], [])
+            message = host.recv()
+            while "method" in message and "id" in message:
+                host.answer_host_request(message, [])
+                message = host.recv()
+            expect(message.get("id") == out["requestId"] and "result" in message, f"撤销权限后插件应仍返回结果：{message}")
+        finally:
+            host.grants = saved
+            host.active_calls.pop(out["callId"], None)
+        return "撤销 storage.plugin 后插件仍正常返回结果"
+
     def malformed_messages() -> str:
         """规范 5.4：收到畸形消息时回复对应错误码，且进程继续工作。"""
         cases = [
@@ -393,6 +478,8 @@ def run(package: Path) -> int:
         check("宿主校验输入", host_rejects_bad_input)
         check("正常调用、存储回调与对象校验", happy_path)
         check("业务失败 isError", business_failure)
+        check("并发调用", concurrent_calls)
+        check("调用途中撤销权限", revoked_mid_call)
         check("取消 $/cancel", cancellation)
         check("未知方法", unknown_method)
         check("畸形消息", malformed_messages)

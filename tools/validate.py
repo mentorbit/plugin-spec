@@ -20,6 +20,7 @@ from urllib.parse import unquote
 
 from jsonschema import Draft202012Validator
 from markdown_it import MarkdownIt
+from mdit_py_plugins.dollarmath import dollarmath_plugin
 from referencing import Registry, Resource
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -39,9 +40,12 @@ IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 REF_RE = re.compile(r"^(?:(?P<plugin>[a-z][a-z0-9-]{1,38}\.[a-z][a-z0-9-]{1,38})/)?(?P<pack>[a-z][a-z0-9_]{1,31})#(?P<entry>[a-z0-9][a-z0-9_-]{0,63})$")
 SCHEME_RE = re.compile(r"^[a-z][a-z0-9+.-]*:|^//", re.I)
 
-# 规范 3.6：CommonMark 加 GFM 表格与删除线；不启用自动链接字面量。
-# 打开 html 选项只是为了让解析器识别出原始 HTML，从而报告它；链接校验关闭，以便所有链接都交给本工具检查。
-MARKDOWN = MarkdownIt("commonmark", {"html": True, "linkify": False}).enable(["table", "strikethrough"])
+# 规范 3.6：CommonMark 加 GFM 表格与删除线，以及 $...$、$$...$$ 数学公式；不启用自动链接字面量。
+# 打开 html 选项只是为了让解析器识别出原始 HTML，从而报告它；数学公式先于 HTML 解析，公式里的 < > 不会被误判；
+# 链接校验关闭，以便所有链接都交给本工具检查。
+MARKDOWN = (MarkdownIt("commonmark", {"html": True, "linkify": False})
+            .enable(["table", "strikethrough"])
+            .use(dollarmath_plugin, allow_space=True, double_inline=True))
 MARKDOWN.validateLink = lambda url: True
 
 

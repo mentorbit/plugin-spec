@@ -83,7 +83,10 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["id", "version"],
-          "properties": { "id": { "type": "string" }, "version": { "type": "string" } }
+          "properties": {
+            "id": { "$ref": "manifest.schema.json#/$defs/pluginId" },
+            "version": { "$ref": "manifest.schema.json#/$defs/semver" }
+          }
         },
         "grants": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
         "locale": { "type": "string" },

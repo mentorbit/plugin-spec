@@ -5,7 +5,10 @@
 
 from __future__ import annotations
 
+import io
+import json
 import sys
+import types
 import unittest
 from pathlib import Path
 
@@ -115,6 +118,41 @@ class ReadOnlyResultTests(unittest.TestCase):
     def test_read_only_with_objects_fails(self):
         with self.assertRaises(smoke_tool.CheckFailed):
             self.call_with_result({"summary": "ok", "objects": [{"objectType": "x_y", "value": {}, "fallbackText": "x"}]})
+
+
+class SizeLimitTests(unittest.TestCase):
+    """规范 5.2 / 5.4 的大小上限。"""
+
+    def test_storage_value_over_64_kib_rejected(self):
+        host = FakeHost(["storage.plugin"])
+        host.active_calls["c1"] = {"learner": "l1", "effect": "creates_object"}
+        big = "x" * (smoke_tool.MAX_STORAGE_VALUE_BYTES + 1)
+        host.answer_host_request({"jsonrpc": "2.0", "id": "h1", "method": "host/storage.set",
+                                  "params": {"callId": "c1", "key": "k", "value": big}}, [])
+        self.assertEqual(reason(host.sent[-1]), "invalid_params")
+        self.assertNotIn(("l1", "k"), host.storage)
+
+    def test_object_value_over_128_kib_fails(self):
+        manifest = {"contributes": {"tools": [{
+            "id": "big", "effect": "creates_object", "timeoutMs": 1000,
+            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        }]}}
+        obj = {"objectType": "x_y", "value": {"blob": "x" * smoke_tool.MAX_OBJECT_BYTES}, "fallbackText": "x"}
+        host = FakeHost([], manifest, script=[{"jsonrpc": "2.0", "id": "q1", "result": {"summary": "ok", "objects": [obj]}}])
+        with self.assertRaises(smoke_tool.CheckFailed):
+            host.call_tool("big", {})
+
+    def test_line_over_4_mib_reported(self):
+        host = FakeHost([])
+        host.inbox = smoke_tool.queue.Queue()
+        line = json.dumps({"jsonrpc": "2.0", "method": "x", "params": {"pad": "x" * smoke_tool.MAX_LINE_BYTES}}).encode() + b"\n"
+        host.proc = types.SimpleNamespace(stdout=io.BytesIO(line))
+        smoke_tool.Host._read(host)
+        message = host.inbox.get_nowait()
+        self.assertIn("__oversize__", message)
+        with self.assertRaises(smoke_tool.CheckFailed):
+            host.inbox.put(message)
+            smoke_tool.Host.recv(host, timeout=0.1)
 
 
 class TimeoutTests(unittest.TestCase):

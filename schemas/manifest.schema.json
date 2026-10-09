@@ -87,7 +87,6 @@
   "$defs": {
     "pluginId": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,38}\\.[a-z][a-z0-9-]{1,38}$" },
     "contributionId": { "type": "string", "pattern": "^[a-z][a-z0-9_]{1,31}$" },
-    "qualifiedObjectType": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,38}\\.[a-z][a-z0-9-]{1,38}/[a-z][a-z0-9_]{1,31}$" },
     "foreignObjectTypeRef": {
       "description": "渲染其他插件的对象类型：<全局限定名>@<主版本>，见规范 4.1、7.3。",
       "type": "string",

@@ -246,6 +246,7 @@ class ContentRules(PackageCase):
             "尖括号 http 自动链接": ("<http://example.com>", "链接只允许 https"),
             "javascript 链接": ("[x](javascript:alert(1))", "链接只允许 https"),
             "原始 HTML 块": ("<div>块</div>", "原始 HTML"),
+            "公式之外的 HTML": ("公式 $x$ 后面 <span>HTML</span>", "原始 HTML"),
         }
         for name, (body, fragment) in cases.items():
             with self.subTest(name):
@@ -260,6 +261,9 @@ class ContentRules(PackageCase):
             "行内代码中的 HTML": "`<div>` 是块级标签",
             "裸网址（不渲染为链接）": "访问 http://example.com 了解更多",
             "表格与删除线": "| a | b |\n|---|---|\n| 1 | ~~2~~ |",
+            "行内公式中的尖括号": "$a<b>c$ 与 $x<y$",
+            "块级公式中的尖括号": "$$\n\\langle v, w \\rangle <b>\n$$",
+            "转义的美元符号": "价格是 \\$5",
         }
         for name, body in cases.items():
             with self.subTest(name):
@@ -513,6 +517,15 @@ class ProtocolSchemaConsistency(unittest.TestCase):
                 with self.subTest(method=method, kind=kind):
                     self.assertIn(self.def_name(method, kind), defs)
 
+    def test_envelope_producer_version_must_be_semver(self):
+        """规范 5.2 的信封示例合规；producer.pluginVersion 必须是 SemVer。"""
+        envelope = json_block_after(spec_text("05-对象与工具.md"), "## 5.2")
+        validator = validate.Draft202012Validator(
+            {"$ref": "https://mentorbit.invalid/spec/0.1/object-envelope.schema.json"}, registry=REGISTRY)
+        self.assertTrue(validator.is_valid(envelope))
+        bad = {**envelope, "producer": {**envelope["producer"], "pluginVersion": "abcde"}}
+        self.assertFalse(validator.is_valid(bad))
+
     def test_learner_projection_example_matches_schema(self):
         """第 06 章 6.2 的投影示例必须符合 learnerReadResult。"""
         example = json_block_after(spec_text("06-学习数据与证据.md"), "## 6.2")
@@ -532,6 +545,8 @@ class ProtocolSchemaConsistency(unittest.TestCase):
             "learnerReadParams": {"callId": "c1", "dimension": "mood"},
             "evidenceProposeParams": {"callId": "c1", "eventType": "nodot", "payload": {}, "idempotencyKey": "k1"},
             "modelInvokeParams": {"callId": "c1", "messages": [], "maxTokens": 64},
+            "initializeParams": {"protocol": "mentorbit.tool/0.1", "plugin": {"id": "Bad", "version": "x"},
+                                 "grants": [], "locale": "zh-CN", "limits": {"maxConcurrentCalls": 1}},
         }
         for name, sample in valid.items():
             with self.subTest(valid=name):

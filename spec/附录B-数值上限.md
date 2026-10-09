@@ -2,7 +2,7 @@
 
 > 状态：草案
 
-本附录由 `tools/gen_limits.py` 根据 `schemas/` 生成，汇总各数据结构的长度、数量与取值上限，与正文具有同等规范效力。修改上限时**必须**修改 Schema 并重新生成本附录（见 7.5）。
+本附录由 `tools/gen_limits.py` 根据 `schemas/` 生成，汇总各数据结构的长度、数量与取值上限。数值上限以 Schema 为准（见 0.7）；修改上限时**必须**修改 Schema 并重新生成本附录（见 7.5）。
 
 字段路径中，`[]` 表示数组元素，`#名称` 表示 Schema 内的共享定义，`<键>`、`<值>` 分别表示对象的键与值。
 
@@ -62,7 +62,6 @@
 | `manifest.schema.json` | `#rendererContribution.objectTypes` | 至少 1 项 |
 | `manifest.schema.json` | `#rendererContribution.minHeight` | ≥ 40，≤ 4000 |
 | `manifest.schema.json` | `#rendererContribution.maxHeight` | ≥ 40，≤ 4000 |
-| `object-envelope.schema.json` | `producer.pluginVersion` | 最短 5 个字符 |
 | `object-envelope.schema.json` | `fallbackText` | 最短 1 个字符，最长 2000 个字符 |
 | `renderer-messages.schema.json` | `#emptyObject` | 至多 0 个键 |
 | `renderer-messages.schema.json` | `#stateKey` | 最短 1 个字符，最长 64 个字符 |
