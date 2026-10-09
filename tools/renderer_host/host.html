@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>渲染器开发宿主</title>
+  <style>
+    :root { color-scheme: light dark; --bg: #f6f6f4; --panel: #fff; --fg: #1a1a1a; --muted: #666; --border: #ddd; --accent: #2f6fdd; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #161616; --panel: #202020; --fg: #eee; --muted: #999; --border: #3a3a3a; --accent: #7aa5ff; } }
+    body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg); font: 14px/1.5 system-ui, sans-serif; }
+    main { max-width: 860px; margin: 0 auto; display: grid; gap: 12px; }
+    section { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+    h1 { font-size: 16px; margin: 0; }
+    h2 { font-size: 13px; color: var(--muted); margin: 0 0 8px; font-weight: 600; }
+    iframe { width: 100%; border: 1px dashed var(--border); border-radius: 6px; background: transparent; display: block; }
+    button { font: inherit; padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: inherit; cursor: pointer; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    #log { font: 12px/1.45 ui-monospace, monospace; max-height: 280px; overflow: auto; white-space: pre-wrap; word-break: break-all; margin: 0; }
+    .suggest { border: 1px solid var(--accent); border-radius: 6px; padding: 8px; margin-top: 8px; }
+    .muted { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <main>
+    <section>
+      <h1 id="heading">渲染器开发宿主</h1>
+      <div class="muted" id="meta"></div>
+      <div class="row" style="margin-top:8px">
+        <label><input type="checkbox" id="grantStorage" checked> 授予 storage.plugin</label>
+        <button id="theme" type="button">切换主题</button>
+        <button id="update" type="button">发送对象更新</button>
+        <button id="reload" type="button">重新加载渲染器</button>
+      </div>
+    </section>
+    <section>
+      <h2>渲染器（sandbox="allow-scripts"）</h2>
+      <div id="stage"></div>
+      <div id="fallback" class="muted" hidden></div>
+      <div id="suggestions"></div>
+    </section>
+    <section>
+      <h2>消息日志</h2>
+      <pre id="log"></pre>
+    </section>
+  </main>
+  <script src="/host.js"></script>
+</body>
+</html>

@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mentorbit.invalid/spec/0.1/renderer-messages.schema.json",
+  "title": "渲染器消息协议（mentorbit.renderer/0.1）",
+  "description": "外形与工具协议相同（JSON-RPC 2.0），错误对象复用 tool-messages.schema.json。",
+  "oneOf": [
+    { "$ref": "tool-messages.schema.json#/$defs/request" },
+    { "$ref": "tool-messages.schema.json#/$defs/notification" },
+    { "$ref": "tool-messages.schema.json#/$defs/successResponse" },
+    { "$ref": "tool-messages.schema.json#/$defs/errorResponse" }
+  ],
+  "$defs": {
+    "readyParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol"],
+      "properties": { "protocol": { "const": "mentorbit.renderer/0.1" } }
+    },
+    "theme": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["colorScheme", "tokens"],
+      "properties": {
+        "colorScheme": { "enum": ["light", "dark"] },
+        "tokens": {
+          "type": "object",
+          "required": ["background", "foreground", "muted", "accent", "border", "fontFamily", "fontSizeBase"],
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "initParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "rendererId", "object", "locale", "theme", "grants"],
+      "properties": {
+        "protocol": { "const": "mentorbit.renderer/0.1" },
+        "rendererId": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,38}\\.[a-z][a-z0-9-]{1,38}/[a-z][a-z0-9_]{1,31}$" },
+        "object": { "$ref": "object-envelope.schema.json" },
+        "locale": { "type": "string" },
+        "theme": { "$ref": "#/$defs/theme" },
+        "grants": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+      }
+    },
+    "objectUpdatedParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["object"],
+      "properties": { "object": { "$ref": "object-envelope.schema.json" } }
+    },
+    "themeChangedParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["theme"],
+      "properties": { "theme": { "$ref": "#/$defs/theme" } }
+    },
+    "resizeParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["height"],
+      "properties": { "height": { "type": "integer", "minimum": 0, "maximum": 10000 } }
+    },
+    "suggestPromptParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text"],
+      "properties": { "text": { "type": "string", "minLength": 1, "maxLength": 500 } }
+    },
+    "openLinkParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url"],
+      "properties": { "url": { "type": "string", "pattern": "^https://[^\\s]+$", "maxLength": 2048 } }
+    },
+    "stateGetParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key"],
+      "properties": { "key": { "type": "string", "minLength": 1, "maxLength": 64 } }
+    },
+    "stateSetParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "value"],
+      "properties": { "key": { "type": "string", "minLength": 1, "maxLength": 64 }, "value": {} }
+    }
+  }
+}

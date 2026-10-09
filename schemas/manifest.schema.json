@@ -1,0 +1,194 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mentorbit.invalid/spec/0.1/manifest.schema.json",
+  "title": "Mentorbit 插件清单（mentorbit.plugin.json）",
+  "type": "object",
+  "additionalProperties": false,
+  "patternProperties": {
+    "^x-": {}
+  },
+  "required": ["specVersion", "id", "version", "displayName", "description", "defaultLocale", "publisher", "license", "contributes"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "specVersion": { "const": "0.1" },
+    "id": { "$ref": "#/$defs/pluginId" },
+    "version": { "$ref": "#/$defs/semver" },
+    "displayName": { "$ref": "#/$defs/localizedText", "x-maxChars": 40 },
+    "description": { "$ref": "#/$defs/localizedText", "x-maxChars": 200 },
+    "defaultLocale": { "$ref": "#/$defs/locale" },
+    "publisher": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["displayName"],
+      "properties": {
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "url": { "$ref": "#/$defs/httpsUrl" },
+        "email": { "type": "string", "pattern": "^[^@\\s]+@[^@\\s]+$" }
+      }
+    },
+    "license": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "repository": { "$ref": "#/$defs/httpsUrl" },
+    "homepage": { "$ref": "#/$defs/httpsUrl" },
+    "privacyPolicy": { "$ref": "#/$defs/httpsUrl" },
+    "icon": { "allOf": [{ "$ref": "#/$defs/relPath" }, { "pattern": "\\.png$" }] },
+    "requires": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "extensionPoints": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "enum": ["contentPacks", "renderers", "tools"] }
+        }
+      }
+    },
+    "permissions": {
+      "type": "array",
+      "maxItems": 32,
+      "items": { "$ref": "#/$defs/permissionRequest" }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "interpreter", "entry"],
+      "properties": {
+        "kind": { "const": "process" },
+        "interpreter": { "enum": ["python3", "node", "native"] },
+        "entry": { "$ref": "#/$defs/relPath" }
+      }
+    },
+    "contributes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "objectTypes": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/objectTypeContribution" } },
+        "tools": { "type": "array", "maxItems": 32, "items": { "$ref": "#/$defs/toolContribution" } },
+        "renderers": { "type": "array", "maxItems": 32, "items": { "$ref": "#/$defs/rendererContribution" } },
+        "contentPacks": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/contentPackContribution" } }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": ["contributes"],
+        "properties": { "contributes": { "required": ["tools"], "properties": { "tools": { "minItems": 1 } } } }
+      },
+      "then": { "required": ["runtime"] }
+    },
+    {
+      "if": {
+        "required": ["permissions"],
+        "properties": { "permissions": { "contains": { "properties": { "id": { "pattern": "^network:" } } } } }
+      },
+      "then": { "required": ["privacyPolicy"] }
+    }
+  ],
+  "$defs": {
+    "pluginId": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,38}\\.[a-z][a-z0-9-]{1,38}$" },
+    "contributionId": { "type": "string", "pattern": "^[a-z][a-z0-9_]{1,31}$" },
+    "qualifiedObjectType": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,38}\\.[a-z][a-z0-9-]{1,38}/[a-z][a-z0-9_]{1,31}$" },
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$"
+    },
+    "locale": { "type": "string", "pattern": "^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$" },
+    "httpsUrl": { "type": "string", "pattern": "^https://[^\\s]+$", "maxLength": 2048 },
+    "relPath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!/)(?!.*\\\\)(?!.*:)(?!.*(^|/)\\.\\.(/|$))[^\\u0000]+$"
+    },
+    "localizedText": {
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "pattern": "^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$" },
+          "additionalProperties": { "type": "string", "minLength": 1 }
+        }
+      ]
+    },
+    "permissionRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "reason"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^(storage\\.plugin|model\\.invoke|context\\.read:message|network:https://[a-z0-9.-]+(:[0-9]{1,5})?|objects\\.read:[a-z][a-z0-9-]{1,38}\\.[a-z][a-z0-9-]{1,38}/[a-z][a-z0-9_]{1,31}|learner\\.read:(structure|knowledge|human|value|practice)|evidence\\.propose:[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+)$"
+        },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "optional": { "type": "boolean", "default": false }
+      }
+    },
+    "objectTypeContribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "schemaVersion", "schema"],
+      "properties": {
+        "id": { "$ref": "#/$defs/contributionId" },
+        "title": { "$ref": "#/$defs/localizedText" },
+        "schemaVersion": { "$ref": "#/$defs/semver" },
+        "schema": { "allOf": [{ "$ref": "#/$defs/relPath" }, { "pattern": "\\.json$" }] }
+      }
+    },
+    "inputSchema": {
+      "type": "object",
+      "required": ["type", "properties", "additionalProperties"],
+      "properties": {
+        "type": { "const": "object" },
+        "properties": { "type": "object" },
+        "required": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "additionalProperties": { "const": false }
+      }
+    },
+    "toolContribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "description", "whenToUse", "whenNotToUse", "inputSchema", "effect"],
+      "properties": {
+        "id": { "$ref": "#/$defs/contributionId" },
+        "title": { "$ref": "#/$defs/localizedText" },
+        "description": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "whenToUse": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "whenNotToUse": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "inputSchema": { "$ref": "#/$defs/inputSchema" },
+        "outputObjectTypes": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/contributionId" } },
+        "effect": { "enum": ["read_only", "creates_object"] },
+        "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 120000, "default": 30000 }
+      }
+    },
+    "rendererContribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "objectTypes", "entry"],
+      "properties": {
+        "id": { "$ref": "#/$defs/contributionId" },
+        "title": { "$ref": "#/$defs/localizedText" },
+        "objectTypes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "anyOf": [{ "$ref": "#/$defs/contributionId" }, { "$ref": "#/$defs/qualifiedObjectType" }] }
+        },
+        "entry": { "allOf": [{ "$ref": "#/$defs/relPath" }, { "pattern": "\\.html$" }] },
+        "minHeight": { "type": "integer", "minimum": 40, "maximum": 4000 },
+        "maxHeight": { "type": "integer", "minimum": 40, "maximum": 4000 }
+      }
+    },
+    "contentPackContribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "path", "title"],
+      "properties": {
+        "id": { "$ref": "#/$defs/contributionId" },
+        "kind": { "enum": ["course-graph", "question-bank", "lecture-set"] },
+        "path": { "allOf": [{ "$ref": "#/$defs/relPath" }, { "pattern": "\\.json$" }] },
+        "title": { "$ref": "#/$defs/localizedText" }
+      }
+    }
+  }
+}

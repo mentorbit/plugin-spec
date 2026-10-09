@@ -1,0 +1,74 @@
+{
+  "format": "mentorbit.question-bank/0.1",
+  "license": "CC-BY-4.0",
+  "attribution": "示例内容，由 Mentorbit 规范作者编写。",
+  "questions": [
+    {
+      "id": "var-assign-1",
+      "type": "single_choice",
+      "stem": "执行 `x = 3` 之后再执行 `x = x + 2`，`x` 的值是多少？",
+      "options": [
+        { "id": "a", "text": "`3`" },
+        { "id": "b", "text": "`5`" },
+        { "id": "c", "text": "`x + 2`" },
+        { "id": "d", "text": "程序报错" }
+      ],
+      "answer": { "optionIds": ["b"] },
+      "explanation": "赋值语句先计算右边的表达式 `x + 2`，此时 `x` 为 `3`，结果 `5` 再存回 `x`。",
+      "hints": ["先看右边：执行第二条语句时，`x` 里存的是什么？"],
+      "nodes": ["intro_graph#variables"],
+      "difficulty": 1
+    },
+    {
+      "id": "var-assign-2",
+      "type": "single_choice",
+      "stem": "执行 `y = 10`、`y = y * 2`、`y = y - 5` 之后，`y` 的值是多少？",
+      "options": [
+        { "id": "a", "text": "`10`" },
+        { "id": "b", "text": "`15`" },
+        { "id": "c", "text": "`20`" },
+        { "id": "d", "text": "`5`" }
+      ],
+      "answer": { "optionIds": ["b"] },
+      "explanation": "依次执行：`10` → `20` → `15`。每条赋值都用变量当前的值计算。",
+      "nodes": ["intro_graph#variables"],
+      "difficulty": 2,
+      "variantOf": "var-assign-1"
+    },
+    {
+      "id": "loop-kinds",
+      "type": "multiple_choice",
+      "stem": "下列哪些情况适合用循环来表达？",
+      "options": [
+        { "id": "a", "text": "对列表中的每个元素求和" },
+        { "id": "b", "text": "读取一个配置值一次" },
+        { "id": "c", "text": "反复询问输入，直到用户输入合法数字" }
+      ],
+      "answer": { "optionIds": ["a", "c"] },
+      "explanation": "需要对多个元素重复同一操作，或在条件满足前重复执行时，适合使用循环。只做一次的操作不需要循环。",
+      "nodes": ["intro_graph#control-flow"],
+      "difficulty": 2
+    },
+    {
+      "id": "func-return",
+      "type": "true_false",
+      "stem": "一个函数执行到 `return` 语句后，会继续执行其后的语句。",
+      "answer": { "value": false },
+      "explanation": "`return` 会立即结束当前函数的执行，并把值交回给调用者。",
+      "nodes": ["intro_graph#functions"],
+      "difficulty": 1
+    },
+    {
+      "id": "why-functions",
+      "type": "short_answer",
+      "stem": "用一两句话说明：为什么要把重复出现的代码写成函数？",
+      "answer": {
+        "reference": "函数把重复的逻辑集中在一处，便于复用与修改；同时给这段逻辑起名，使代码更容易理解和测试。",
+        "rubric": ["提到复用或避免重复", "提到修改只需改一处，或提到可读性、可测试性"]
+      },
+      "explanation": "复用、集中修改、命名带来的可读性，是使用函数最常见的三个理由。",
+      "nodes": ["intro_graph#functions"],
+      "difficulty": 2
+    }
+  ]
+}

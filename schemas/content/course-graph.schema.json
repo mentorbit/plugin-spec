@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mentorbit.invalid/spec/0.1/content/course-graph.schema.json",
+  "title": "课程图（course-graph）",
+  "description": "无环约束（hard_prereq 与 soft_prereq 子图）、引用存在性与重复边由校验工具检查，Schema 无法表达。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "license", "attribution", "nodes", "edges"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "format": { "const": "mentorbit.course-graph/0.1" },
+    "license": { "type": "string", "minLength": 1 },
+    "attribution": { "type": "string", "minLength": 1, "maxLength": 1000 },
+    "nodes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 5000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "title"],
+        "properties": {
+          "id": { "$ref": "#/$defs/entryId" },
+          "title": { "$ref": "#/$defs/localizedText" },
+          "summary": { "$ref": "#/$defs/localizedText" },
+          "cluster": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "tags": { "type": "array", "uniqueItems": true, "maxItems": 16, "items": { "type": "string", "minLength": 1, "maxLength": 32 } },
+          "estimatedHours": { "type": "number", "exclusiveMinimum": 0, "maximum": 2000 },
+          "source": { "$ref": "#/$defs/source" }
+        }
+      }
+    },
+    "edges": {
+      "type": "array",
+      "maxItems": 20000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["from", "to", "relation"],
+        "properties": {
+          "from": { "$ref": "#/$defs/entryId" },
+          "to": { "$ref": "#/$defs/entryId" },
+          "relation": { "enum": ["hard_prereq", "soft_prereq", "co_learn"] }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "entryId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$" },
+    "localizedText": {
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        { "type": "object", "minProperties": 1, "additionalProperties": { "type": "string", "minLength": 1 } }
+      ]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "url": { "type": "string", "pattern": "^https://[^\\s]+$" }
+      }
+    }
+  }
+}

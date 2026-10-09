@@ -1,0 +1,20 @@
+{
+  "变量": {
+    "aliases": ["variable"],
+    "definition": "有名字的存储位置，用来保存一个值；之后可以读取或用新值替换。",
+    "example": "x = 3 把 3 存入 x；x = x + 2 先读出 3，算出 5，再存回 x。",
+    "pitfalls": ["把赋值号 = 理解成数学上的相等", "以为 b = a 之后修改 a 会同步改变 b（对整数等不可变值不会）"]
+  },
+  "函数": {
+    "aliases": ["function"],
+    "definition": "一段有名字、可以接收参数并返回结果的代码，用来复用逻辑。",
+    "example": "def square(n): return n * n，调用 square(4) 得到 16。",
+    "pitfalls": ["以为 return 之后的语句还会执行", "混淆“定义函数”和“调用函数”"]
+  },
+  "循环": {
+    "aliases": ["loop"],
+    "definition": "在条件满足时重复执行同一段代码的控制结构。",
+    "example": "for n in [1, 2, 3]: total += n，依次把每个元素加到 total 上。",
+    "pitfalls": ["循环条件永远为真导致死循环", "边界多算或少算一次（差一错误）"]
+  }
+}

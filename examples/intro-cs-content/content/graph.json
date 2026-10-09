@@ -1,0 +1,25 @@
+{
+  "format": "mentorbit.course-graph/0.1",
+  "license": "CC-BY-4.0",
+  "attribution": "示例内容，由 Mentorbit 规范作者编写。",
+  "nodes": [
+    { "id": "computer-basics", "title": "计算机基础", "cluster": "foundations", "estimatedHours": 6 },
+    { "id": "discrete-math", "title": "离散数学入门", "cluster": "math", "estimatedHours": 20 },
+    { "id": "programming-basics", "title": "程序设计入门", "cluster": "programming", "estimatedHours": 10 },
+    { "id": "variables", "title": "变量与类型", "summary": "变量如何保存值，类型如何约束值能参与的运算。", "cluster": "programming", "estimatedHours": 3 },
+    { "id": "control-flow", "title": "分支与循环", "cluster": "programming", "estimatedHours": 4 },
+    { "id": "functions", "title": "函数", "cluster": "programming", "estimatedHours": 4 },
+    { "id": "data-structures", "title": "数据结构入门", "cluster": "programming", "estimatedHours": 24 },
+    { "id": "algorithms", "title": "算法入门", "cluster": "programming", "estimatedHours": 24 }
+  ],
+  "edges": [
+    { "from": "computer-basics", "to": "programming-basics", "relation": "soft_prereq" },
+    { "from": "programming-basics", "to": "variables", "relation": "hard_prereq" },
+    { "from": "variables", "to": "control-flow", "relation": "hard_prereq" },
+    { "from": "control-flow", "to": "functions", "relation": "hard_prereq" },
+    { "from": "functions", "to": "data-structures", "relation": "hard_prereq" },
+    { "from": "data-structures", "to": "algorithms", "relation": "hard_prereq" },
+    { "from": "discrete-math", "to": "algorithms", "relation": "soft_prereq" },
+    { "from": "discrete-math", "to": "data-structures", "relation": "co_learn" }
+  ]
+}

@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>闪卡</title>
+  <style>
+    :root { --bg: #fff; --fg: #1a1a1a; --muted: #666; --accent: #2f6fdd; --border: #ddd; --font: system-ui, sans-serif; --size: 15px; }
+    body { margin: 0; padding: 12px; background: var(--bg); color: var(--fg); font: var(--size)/1.5 var(--font); }
+    h1 { font-size: 1em; margin: 0 0 8px; }
+    .card { border: 1px solid var(--border); border-radius: 8px; padding: 20px; min-height: 80px; cursor: pointer; }
+    .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .side { color: var(--muted); font-size: 0.85em; margin-bottom: 6px; }
+    .bar { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+    button { font: inherit; padding: 4px 12px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: inherit; cursor: pointer; }
+    button:disabled { opacity: 0.4; cursor: default; }
+    .pos { color: var(--muted); margin-left: auto; }
+  </style>
+</head>
+<body>
+  <h1 id="title"></h1>
+  <div id="card" class="card" role="button" tabindex="0" aria-live="polite">
+    <div id="side" class="side"></div>
+    <div id="text"></div>
+  </div>
+  <div class="bar">
+    <button id="prev" type="button">上一张</button>
+    <button id="next" type="button">下一张</button>
+    <button id="ask" type="button">就这张卡提问</button>
+    <span id="pos" class="pos"></span>
+  </div>
+  <script src="main.js"></script>
+</body>
+</html>

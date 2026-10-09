@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "闪卡组",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["title", "cards"],
+  "properties": {
+    "title": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "cards": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["front", "back"],
+        "properties": {
+          "front": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "back": { "type": "string", "minLength": 1, "maxLength": 2000 }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "specVersion": "0.1",
+  "id": "example.intro-cs",
+  "version": "0.1.0",
+  "displayName": { "zh-CN": "计算机导论示例内容", "en": "Intro to CS sample content" },
+  "description": { "zh-CN": "演示内容包格式：一张小型课程图、几道练习题和一篇讲义。", "en": "Demonstrates content packs: a small course graph, a few questions and one lecture." },
+  "defaultLocale": "zh-CN",
+  "publisher": { "displayName": "Mentorbit 规范示例" },
+  "license": "CC-BY-4.0",
+  "requires": { "extensionPoints": ["contentPacks"] },
+  "contributes": {
+    "contentPacks": [
+      { "id": "intro_graph", "kind": "course-graph", "path": "content/graph.json", "title": "计算机导论课程图" },
+      { "id": "intro_questions", "kind": "question-bank", "path": "content/questions.json", "title": "导论练习题" },
+      { "id": "intro_lectures", "kind": "lecture-set", "path": "content/lectures.json", "title": "导论讲义" }
+    ]
+  }
+}

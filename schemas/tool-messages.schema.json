@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mentorbit.invalid/spec/0.1/tool-messages.schema.json",
+  "title": "工具运行协议消息（mentorbit.tool/0.1）",
+  "description": "按方法分别定义参数与结果。根 Schema 只校验 JSON-RPC 2.0 外形，具体方法用 $defs 中对应定义校验。",
+  "oneOf": [
+    { "$ref": "#/$defs/request" },
+    { "$ref": "#/$defs/notification" },
+    { "$ref": "#/$defs/successResponse" },
+    { "$ref": "#/$defs/errorResponse" }
+  ],
+  "$defs": {
+    "id": { "oneOf": [{ "type": "string", "minLength": 1, "maxLength": 64 }, { "type": "integer" }] },
+    "callId": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$" },
+    "request": {
+      "type": "object",
+      "required": ["jsonrpc", "id", "method"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "$ref": "#/$defs/id" },
+        "method": { "type": "string", "minLength": 1 },
+        "params": { "type": "object" }
+      }
+    },
+    "notification": {
+      "type": "object",
+      "required": ["jsonrpc", "method"],
+      "not": { "required": ["id"] },
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "type": "string", "minLength": 1 },
+        "params": { "type": "object" }
+      }
+    },
+    "successResponse": {
+      "type": "object",
+      "required": ["jsonrpc", "id", "result"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "$ref": "#/$defs/id" },
+        "result": { "type": "object" }
+      }
+    },
+    "errorResponse": {
+      "type": "object",
+      "required": ["jsonrpc", "id", "error"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+        "error": { "$ref": "#/$defs/error" }
+      }
+    },
+    "error": {
+      "type": "object",
+      "required": ["code", "message", "data"],
+      "additionalProperties": false,
+      "properties": {
+        "code": { "enum": [-32700, -32600, -32601, -32602, -32603, -32001, -32002, -32003, -32004, -32005, -32006] },
+        "message": { "type": "string" },
+        "data": {
+          "type": "object",
+          "required": ["reason"],
+          "properties": {
+            "reason": {
+              "enum": ["parse_error", "invalid_request", "method_not_found", "invalid_params", "internal_error",
+                       "permission_denied", "resource_exhausted", "timeout", "cancelled", "not_found", "upstream_error"]
+            }
+          }
+        }
+      }
+    },
+    "initializeParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "plugin", "grants", "locale", "limits"],
+      "properties": {
+        "protocol": { "const": "mentorbit.tool/0.1" },
+        "plugin": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "version"],
+          "properties": { "id": { "type": "string" }, "version": { "type": "string" } }
+        },
+        "grants": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "locale": { "type": "string" },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["maxConcurrentCalls"],
+          "properties": { "maxConcurrentCalls": { "type": "integer", "minimum": 1 } }
+        }
+      }
+    },
+    "initializeResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "tools"],
+      "properties": {
+        "protocol": { "const": "mentorbit.tool/0.1" },
+        "tools": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+      }
+    },
+    "toolsCallParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["callId", "toolId", "input", "scope", "timeoutMs"],
+      "properties": {
+        "callId": { "$ref": "#/$defs/callId" },
+        "toolId": { "type": "string", "pattern": "^[a-z][a-z0-9_]{1,31}$" },
+        "input": { "type": "object" },
+        "scope": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["learnerRef", "sessionRef", "locale"],
+          "properties": {
+            "learnerRef": { "type": "string", "minLength": 8, "maxLength": 128 },
+            "sessionRef": { "type": "string", "minLength": 8, "maxLength": 128 },
+            "locale": { "type": "string" }
+          }
+        },
+        "timeoutMs": { "type": "integer", "minimum": 1, "maximum": 120000 }
+      }
+    },
+    "toolsCallResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary"],
+      "properties": {
+        "summary": { "type": "string", "maxLength": 4000 },
+        "objects": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["objectType", "value", "fallbackText"],
+            "properties": {
+              "objectType": { "type": "string", "pattern": "^[a-z][a-z0-9_]{1,31}$" },
+              "value": { "type": "object" },
+              "fallbackText": { "type": "string", "minLength": 1, "maxLength": 2000 }
+            }
+          }
+        },
+        "isError": { "type": "boolean" }
+      }
+    },
+    "cancelParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["callId"],
+      "properties": { "callId": { "$ref": "#/$defs/callId" } }
+    },
+    "emptyObject": { "type": "object", "additionalProperties": false, "maxProperties": 0 },
+    "storageGetParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["callId", "key"],
+      "properties": { "callId": { "$ref": "#/$defs/callId" }, "key": { "type": "string", "minLength": 1, "maxLength": 64 } }
+    },
+    "storageSetParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["callId", "key", "value"],
+      "properties": { "callId": { "$ref": "#/$defs/callId" }, "key": { "type": "string", "minLength": 1, "maxLength": 64 }, "value": {} }
+    }
+  }
+}

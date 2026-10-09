@@ -1,0 +1,22 @@
+{
+  "specVersion": "0.1",
+  "id": "example.flashcards",
+  "version": "0.1.0",
+  "displayName": { "zh-CN": "闪卡", "en": "Flashcards" },
+  "description": { "zh-CN": "把闪卡组对象渲染成可翻面、可切换的卡片。", "en": "Renders flashcard deck objects as flippable cards." },
+  "defaultLocale": "zh-CN",
+  "publisher": { "displayName": "Mentorbit 规范示例" },
+  "license": "Apache-2.0",
+  "requires": { "extensionPoints": ["renderers"] },
+  "permissions": [
+    { "id": "storage.plugin", "reason": "记住你翻到了第几张卡", "optional": true }
+  ],
+  "contributes": {
+    "objectTypes": [
+      { "id": "flashcard_deck", "title": "闪卡组", "schemaVersion": "1.0.0", "schema": "schemas/flashcard_deck.json" }
+    ],
+    "renderers": [
+      { "id": "flashcards", "title": "闪卡", "objectTypes": ["flashcard_deck"], "entry": "renderer/index.html", "minHeight": 180, "maxHeight": 480 }
+    ]
+  }
+}

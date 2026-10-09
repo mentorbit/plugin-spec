@@ -1,0 +1,40 @@
+{
+  "specVersion": "0.1",
+  "id": "example.glossary",
+  "version": "0.1.0",
+  "displayName": { "zh-CN": "术语速查", "en": "Glossary" },
+  "description": { "zh-CN": "按关键词查询计算机术语的定义、最小例子和常见误区。", "en": "Looks up computing terms with a definition, a minimal example and common pitfalls." },
+  "defaultLocale": "zh-CN",
+  "publisher": { "displayName": "Mentorbit 规范示例" },
+  "license": "Apache-2.0",
+  "requires": { "extensionPoints": ["tools"] },
+  "permissions": [
+    { "id": "storage.plugin", "reason": "记录你最近查过的术语，方便回顾", "optional": true }
+  ],
+  "runtime": { "kind": "process", "interpreter": "python3", "entry": "server/main.py" },
+  "contributes": {
+    "objectTypes": [
+      { "id": "glossary_entry", "title": "术语条目", "schemaVersion": "1.0.0", "schema": "schemas/glossary_entry.json" }
+    ],
+    "tools": [
+      {
+        "id": "lookup_term",
+        "title": "查询术语",
+        "description": "按关键词查询计算机术语，返回定义、一个最小例子和常见误区。只收录基础术语。",
+        "whenToUse": "学习者询问某个计算机术语的含义，或对话中出现需要澄清的基础术语时。",
+        "whenNotToUse": "需要完整讲解一个主题、需要最新资讯，或术语不属于计算机基础范畴时。",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "term": { "type": "string", "minLength": 1, "maxLength": 64, "description": "要查询的术语" }
+          },
+          "required": ["term"],
+          "additionalProperties": false
+        },
+        "outputObjectTypes": ["glossary_entry"],
+        "effect": "creates_object",
+        "timeoutMs": 10000
+      }
+    ]
+  }
+}

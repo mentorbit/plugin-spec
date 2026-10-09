@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "术语条目",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["term", "definition", "example", "pitfalls"],
+  "properties": {
+    "term": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "definition": { "type": "string", "minLength": 1, "maxLength": 1000 },
+    "example": { "type": "string", "minLength": 1, "maxLength": 1000 },
+    "pitfalls": { "type": "array", "maxItems": 5, "items": { "type": "string", "minLength": 1, "maxLength": 300 } }
+  }
+}

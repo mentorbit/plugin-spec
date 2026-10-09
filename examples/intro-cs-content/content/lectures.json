@@ -1,0 +1,14 @@
+{
+  "format": "mentorbit.lecture-set/0.1",
+  "license": "CC-BY-4.0",
+  "attribution": "示例内容，由 Mentorbit 规范作者编写。",
+  "lectures": [
+    {
+      "id": "variables-intro",
+      "title": "变量与赋值",
+      "path": "content/lectures/variables.md",
+      "nodes": ["intro_graph#variables"],
+      "estimatedMinutes": 10
+    }
+  ]
+}
