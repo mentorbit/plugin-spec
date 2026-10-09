@@ -6,5 +6,7 @@ updates:
       interval: weekly
   - package-ecosystem: pip
     directory: /tools
+    # 现有版本范围已允许新版本时不改动要求，只在新版本超出范围时提合并请求
+    versioning-strategy: increase-if-necessary
     schedule:
       interval: weekly
