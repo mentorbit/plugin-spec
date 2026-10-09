@@ -1,12 +1,14 @@
 """校验工具的反例测试：每个用例在示例包的副本上制造一处违规，确认 validate.py 能报出来。
+另含文档一致性测试：规范正文中的示例与方法表必须与 Schema、校验器保持一致（规范 7.5）。
 
-用法：python -m unittest tools/test_validate.py
+用法：python -m unittest discover -s tools -p "test_*.py"
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -226,6 +228,86 @@ class IntegrityRules(PackageCase):
         self.write_integrity(pkg)
         (pkg / "extra.txt").write_text("x", encoding="utf-8")
         self.assertRejects(pkg, "未列出的文件")
+
+
+def spec_text(name: str) -> str:
+    return (validate.ROOT / "spec" / name).read_text(encoding="utf-8")
+
+
+def json_block_after(text: str, heading: str):
+    """取某个标题之后的第一个 ```json 代码块。"""
+    match = re.search(re.escape(heading) + r".*?```json\n(.*?)```", text, re.S)
+    assert match, f"找不到 {heading} 之后的 JSON 示例"
+    return json.loads(match.group(1))
+
+
+class DocumentExamples(PackageCase):
+    def test_manifest_overview_example_is_valid(self):
+        """第 01 章 1.2 的示例清单本身必须通过校验，且没有警告。"""
+        manifest = json_block_after(spec_text("01-包与清单.md"), "## 1.2")
+        pkg = Path(self.tmp.name) / "doc-example"
+        pkg.mkdir()
+        (pkg / validate.MANIFEST_NAME).write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+        # 为示例引用的文件放置最小桩文件
+        (pkg / manifest["icon"]).write_bytes(b"\x89PNG\r\n\x1a\n" + b"\0" * 16)
+        entry = pkg / manifest["runtime"]["entry"]
+        entry.parent.mkdir(parents=True)
+        entry.write_text("", encoding="utf-8")
+        for obj in manifest["contributes"].get("objectTypes", []):
+            schema = pkg / obj["schema"]
+            schema.parent.mkdir(parents=True, exist_ok=True)
+            schema.write_text(json.dumps({"type": "object", "properties": {}, "additionalProperties": False}), encoding="utf-8")
+        report = validate.check_package(pkg, VALIDATORS)
+        self.assertEqual(report.errors, [])
+        self.assertEqual(report.warnings, [])
+
+
+class ProtocolSchemaConsistency(unittest.TestCase):
+    TOOL_ID = "https://mentorbit.invalid/spec/0.1/tool-messages.schema.json"
+
+    def defs_validator(self, name: str):
+        return validate.Draft202012Validator({"$ref": f"{self.TOOL_ID}#/$defs/{name}"}, registry=REGISTRY)
+
+    @staticmethod
+    def def_name(method: str, kind: str) -> str:
+        parts = method.removeprefix("host/").replace(".", "_").split("_")
+        return parts[0] + "".join(p[:1].upper() + p[1:] for p in parts[1:]) + kind
+
+    def test_every_host_method_in_spec_has_schema_definitions(self):
+        methods = re.findall(r"^\| `(host/[a-z.]+)` \|", spec_text("05-对象与工具.md"), re.M)
+        self.assertIn("host/evidence.propose", methods)
+        defs = SCHEMAS["tool-messages.schema.json"]["$defs"]
+        for method in methods:
+            for kind in ("Params", "Result"):
+                with self.subTest(method=method, kind=kind):
+                    self.assertIn(self.def_name(method, kind), defs)
+
+    def test_learner_projection_example_matches_schema(self):
+        """第 06 章 6.2 的投影示例必须符合 learnerReadResult。"""
+        example = json_block_after(spec_text("06-学习数据与证据.md"), "## 6.2")
+        errors = [e.message for e in self.defs_validator("learnerReadResult").iter_errors(example)]
+        self.assertEqual(errors, [])
+
+    def test_host_method_samples(self):
+        valid = {
+            "modelInvokeParams": {"callId": "c1", "messages": [{"role": "user", "content": "hi"}], "maxTokens": 64},
+            "httpFetchParams": {"callId": "c1", "url": "https://api.example.com/x", "method": "GET"},
+            "evidenceProposeParams": {"callId": "c1", "eventType": "practice.attempt_submitted", "payload": {}, "idempotencyKey": "k1"},
+            "evidenceProposeResult": {"status": "duplicate"},
+            "storageDeleteParams": {"callId": "c1", "key": "recent"},
+        }
+        invalid = {
+            "httpFetchParams": {"callId": "c1", "url": "http://api.example.com/x", "method": "GET"},
+            "learnerReadParams": {"callId": "c1", "dimension": "mood"},
+            "evidenceProposeParams": {"callId": "c1", "eventType": "nodot", "payload": {}, "idempotencyKey": "k1"},
+            "modelInvokeParams": {"callId": "c1", "messages": [], "maxTokens": 64},
+        }
+        for name, sample in valid.items():
+            with self.subTest(valid=name):
+                self.assertTrue(self.defs_validator(name).is_valid(sample))
+        for name, sample in invalid.items():
+            with self.subTest(invalid=name):
+                self.assertFalse(self.defs_validator(name).is_valid(sample))
 
 
 if __name__ == "__main__":

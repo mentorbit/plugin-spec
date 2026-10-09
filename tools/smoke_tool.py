@@ -49,9 +49,30 @@ def validator_for(ref: str) -> Draft202012Validator:
 
 MESSAGE = validator_for(TOOL_SCHEMA_ID)
 DEFS = {name: validator_for(f"{TOOL_SCHEMA_ID}#/$defs/{name}") for name in (
-    "initializeResult", "toolsCallParams", "toolsCallResult", "storageGetParams", "storageSetParams",
+    "initializeResult", "toolsCallParams", "toolsCallResult",
 )}
 ENVELOPE = validator_for("https://mentorbit.invalid/spec/0.1/object-envelope.schema.json")
+
+
+def host_method_def(method: str, kind: str) -> str:
+    """规范 5.4：host/storage.get -> storageGetParams / storageGetResult。"""
+    parts = method.removeprefix("host/").replace(".", "_").split("_")
+    return parts[0] + "".join(p[:1].upper() + p[1:] for p in parts[1:]) + kind
+
+
+# 宿主方法 -> 所需权限（规范 5.4 表格）；带冒号的按前缀匹配，参数决定后缀
+HOST_PERMISSIONS = {
+    "host/storage.get": "storage.plugin",
+    "host/storage.set": "storage.plugin",
+    "host/storage.delete": "storage.plugin",
+    "host/model.invoke": "model.invoke",
+    "host/http.fetch": "network:",
+    "host/context.message": "context.read:message",
+    "host/objects.read": "objects.read:",
+    "host/learner.read": "learner.read:",
+    "host/evidence.propose": "evidence.propose:",
+}
+STORAGE_WRITES = {"host/storage.set", "host/storage.delete"}
 
 
 class CheckFailed(Exception):
@@ -76,7 +97,7 @@ class Host:
         self.manifest = manifest
         self.grants = grants
         self.storage: dict[tuple[str, str], object] = {}
-        self.active_calls: dict[str, str] = {}  # callId -> learnerRef
+        self.active_calls: dict[str, dict] = {}  # callId -> {"learner", "effect"}
         self.inbox: queue.Queue = queue.Queue()
         self.next_id = 0
         self.tmp = tempfile.TemporaryDirectory(prefix="mentorbit-tool-")
@@ -133,21 +154,42 @@ class Host:
         def deny(reason="permission_denied", code=-32001):
             self.send({"id": request_id, "error": {"code": code, "message": reason, "data": {"reason": reason}}})
 
-        learner = self.active_calls.get(params.get("callId"))
-        if learner is None:
+        if method not in HOST_PERMISSIONS:
+            return deny("method_not_found", -32601)
+        assert_valid(validator_for(f"{TOOL_SCHEMA_ID}#/$defs/{host_method_def(method, 'Params')}"), params, f"{method} 参数")
+        call = self.active_calls.get(params.get("callId"))
+        if call is None:
             return deny()
-        if method in ("host/storage.get", "host/storage.set"):
-            if "storage.plugin" not in self.grants:
-                return deny()
-            if method == "host/storage.get":
-                assert_valid(DEFS["storageGetParams"], params, "storage.get 参数")
-                self.send({"id": request_id, "result": {"value": self.storage.get((learner, params["key"]))}})
-            else:
-                assert_valid(DEFS["storageSetParams"], params, "storage.set 参数")
-                self.storage[(learner, params["key"])] = params["value"]
-                self.send({"id": request_id, "result": {}})
+        # 规范 5.3：read_only 工具不得写存储
+        if method in STORAGE_WRITES and call["effect"] == "read_only":
+            return deny()
+        permission = HOST_PERMISSIONS[method]
+        suffix = {"host/objects.read": "objectType", "host/learner.read": "dimension",
+                  "host/evidence.propose": "eventType"}.get(method)
+        if suffix:
+            permission += params[suffix]
+        if method == "host/http.fetch":
+            # 只放行已授权的源：URL 必须恰好是该源，或在源之后紧跟 / 或 ?，防止 example.com.evil.com 这类前缀冒充
+            origins = [g[len("network:"):] for g in self.grants if g.startswith("network:")]
+            granted = any(params["url"] == o or params["url"].startswith((o + "/", o + "?")) for o in origins)
         else:
-            deny("method_not_found", -32601)
+            granted = permission in self.grants
+        if not granted:
+            return deny()
+
+        key = (call["learner"], params.get("key"))
+        if method == "host/storage.get":
+            result = {"value": self.storage.get(key)}
+        elif method == "host/storage.set":
+            self.storage[key] = params["value"]
+            result = {}
+        elif method == "host/storage.delete":
+            self.storage.pop(key, None)
+            result = {}
+        else:
+            return deny("method_not_found", -32601)  # 冒烟宿主只实现存储，其余方法在授权检查后拒绝
+        assert_valid(validator_for(f"{TOOL_SCHEMA_ID}#/$defs/{host_method_def(method, 'Result')}"), result, f"{method} 结果")
+        self.send({"id": request_id, "result": result})
 
     def call_tool(self, tool_id: str, tool_input: dict, learner: str = "learner-ref-0001", hold_host=False):
         """发起 tools/call 并处理期间的宿主回调。hold_host=True 时在第一个回调处暂停，返回控制权。"""
@@ -163,7 +205,7 @@ class Host:
             "timeoutMs": tool.get("timeoutMs", 30000),
         }
         assert_valid(DEFS["toolsCallParams"], params, "tools/call 参数")
-        self.active_calls[call_id] = learner
+        self.active_calls[call_id] = {"learner": learner, "effect": tool["effect"]}
         request_id = self.request("tools/call", params)
         seen: list[str] = []
         try:
@@ -175,6 +217,9 @@ class Host:
                     self.answer_host_request(message, seen)
                     continue
                 expect(message.get("id") == request_id, f"收到不属于本次调用的消息：{message}")
+                # 规范 5.3：read_only 工具产出对象时，宿主丢弃对象并视为失败
+                if tool["effect"] == "read_only":
+                    expect(not message.get("result", {}).get("objects"), "read_only 工具不得产出对象")
                 return {"callId": call_id, "message": message, "seen": seen}
         finally:
             if not hold_host:

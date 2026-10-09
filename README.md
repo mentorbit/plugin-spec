@@ -47,7 +47,7 @@ py -m venv .venv
 .venv\Scripts\python -m pip install -r tools/requirements.txt
 .venv\Scripts\python tools/validate.py examples/intro-cs-content examples/flashcard-renderer examples/glossary-tool
 .venv\Scripts\python tools/smoke_tool.py examples/glossary-tool
-.venv\Scripts\python -m unittest tools/test_validate.py
+.venv\Scripts\python -m unittest discover -s tools -p "test_*.py"
 ```
 
 macOS / Linux：
@@ -57,14 +57,14 @@ python3 -m venv .venv
 .venv/bin/python -m pip install -r tools/requirements.txt
 .venv/bin/python tools/validate.py examples/intro-cs-content examples/flashcard-renderer examples/glossary-tool
 .venv/bin/python tools/smoke_tool.py examples/glossary-tool
-.venv/bin/python -m unittest tools/test_validate.py
+.venv/bin/python -m unittest discover -s tools -p "test_*.py"
 ```
 
 | 工具 | 用途 |
 |---|---|
 | `tools/validate.py` | 校验插件包：清单、权限、引用完整性、对象 Schema、渲染器入口、内容数据、完整性文件 |
 | `tools/smoke_tool.py` | 按第 05 章协议运行工具插件，检查握手、回调、取消与关闭 |
-| `tools/test_validate.py` | 校验器的反例测试 |
+| `tools/test_*.py` | 单元测试：校验器反例、冒烟宿主的宿主方法，以及文档示例、协议 Schema 与正文的一致性 |
 | `tools/renderer_host/serve.py` | 渲染器开发宿主，按第 04 章要求加载渲染器，默认监听 `http://127.0.0.1:8765/` |
 
 ## 参与贡献
@@ -73,4 +73,11 @@ python3 -m venv .venv
 
 ## 许可
 
-规范正文采用 CC BY 4.0，Schema、工具与示例代码采用 Apache-2.0，详见 [LICENSE.md](LICENSE.md)。
+Copyright © 2026 The Mentorbit Authors（Mentorbit 项目作者，以 Git 提交记录为准）
+
+| 范围 | 许可 |
+|---|---|
+| `spec/` 下的规范正文、`README.md` 及其他说明文档 | CC BY 4.0，全文见 [LICENSE-CC-BY](LICENSE-CC-BY) |
+| `schemas/`、`tools/`、`examples/` 下的全部文件 | Apache-2.0，全文见 [LICENSE-APACHE](LICENSE-APACHE) |
+
+依据本规范实现宿主或插件，不需要采用上述任一许可；插件可以闭源发布。
